@@ -281,6 +281,22 @@ create(char *path, short type, short major, short minor)
 }
 
 int
+sys_mount(void)
+{
+  int dev;
+  char *path;
+
+  if(argint(0, &dev) < 0 || argstr(1, &path) < 0)
+    return -1;
+
+  begin_op();
+    cprintf("Called mount with %d and %s", dev, path);
+  end_op();
+
+  return 0;
+}
+
+int
 sys_open(void)
 {
   char *path;
