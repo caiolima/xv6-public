@@ -22,7 +22,7 @@
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 static void itrunc(struct inode*);
-struct superblock sb;   // there should be one per dev, but we run with one dev
+struct superblock sb[NDEV];   // there should be one per dev, but we run with one dev
 
 // Read the super block.
 void
@@ -57,9 +57,9 @@ balloc(uint dev)
   struct buf *bp;
 
   bp = 0;
-  for(b = 0; b < sb.size; b += BPB){
-    bp = bread(dev, BBLOCK(b, sb));
-    for(bi = 0; bi < BPB && b + bi < sb.size; bi++){
+  for(b = 0; b < sb[dev].size; b += BPB){
+    bp = bread(dev, BBLOCK(b, sb[dev]));
+    for(bi = 0; bi < BPB && b + bi < sb[dev].size; bi++){
       m = 1 << (bi % 8);
       if((bp->data[bi/8] & m) == 0){  // Is block free?
         bp->data[bi/8] |= m;  // Mark block in use.
@@ -81,8 +81,8 @@ bfree(int dev, uint b)
   struct buf *bp;
   int bi, m;
 
-  readsb(dev, &sb);
-  bp = bread(dev, BBLOCK(b, sb));
+  readsb(dev, &sb[dev]);
+  bp = bread(dev, BBLOCK(b, sb[dev]));
   bi = b % BPB;
   m = 1 << (bi % 8);
   if((bp->data[bi/8] & m) == 0)
@@ -198,9 +198,9 @@ void
 iinit(int dev)
 {
   initlock(&icache.lock, "icache");
-  readsb(dev, &sb);
-  cprintf("sb: size %d nblocks %d ninodes %d nlog %d logstart %d inodestart %d bmap start %d\n", sb.size,
-          sb.nblocks, sb.ninodes, sb.nlog, sb.logstart, sb.inodestart, sb.bmapstart);
+  readsb(dev, &sb[dev]);
+  cprintf("sb: size %d nblocks %d ninodes %d nlog %d logstart %d inodestart %d bmap start %d\n", sb[dev].size,
+          sb[dev].nblocks, sb[dev].ninodes, sb[dev].nlog, sb[dev].logstart, sb[dev].inodestart, sb[dev].bmapstart);
 }
 
 static struct inode* iget(uint dev, uint inum);
@@ -215,8 +215,8 @@ ialloc(uint dev, short type)
   struct buf *bp;
   struct dinode *dip;
 
-  for(inum = 1; inum < sb.ninodes; inum++){
-    bp = bread(dev, IBLOCK(inum, sb));
+  for(inum = 1; inum < sb[dev].ninodes; inum++){
+    bp = bread(dev, IBLOCK(inum, sb[dev]));
     dip = (struct dinode*)bp->data + inum%IPB;
     if(dip->type == 0){  // a free inode
       memset(dip, 0, sizeof(*dip));
@@ -237,7 +237,7 @@ iupdate(struct inode *ip)
   struct buf *bp;
   struct dinode *dip;
 
-  bp = bread(ip->dev, IBLOCK(ip->inum, sb));
+  bp = bread(ip->dev, IBLOCK(ip->inum, sb[ip->dev]));
   dip = (struct dinode*)bp->data + ip->inum%IPB;
   dip->type = ip->type;
   dip->major = ip->major;
@@ -314,7 +314,7 @@ ilock(struct inode *ip)
   release(&icache.lock);
 
   if(!(ip->flags & I_VALID)){
-    bp = bread(ip->dev, IBLOCK(ip->inum, sb));
+    bp = bread(ip->dev, IBLOCK(ip->inum, sb[ip->dev]));
     dip = (struct dinode*)bp->data + ip->inum%IPB;
     ip->type = dip->type;
     ip->major = dip->major;

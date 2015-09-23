@@ -298,7 +298,7 @@ sys_mount(void)
 
   ilock(ip);
   // We only can mount points over directories nodes
-  if (ip->type != T_DIR) {
+  if (ip->type != T_DIR && ip->ref > 1) {
     iunlock(ip);
     end_op();
     return -1;

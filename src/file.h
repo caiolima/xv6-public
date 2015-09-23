@@ -29,6 +29,7 @@ struct inode {
 // Mount Table Entry
 struct mntentry {
   struct inode *m_inode;
+  struct inode *m_rtinode; // Root inode for device
   int dev;  // Mounted device
   int flag; // Flag
 };
