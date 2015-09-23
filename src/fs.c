@@ -92,6 +92,41 @@ bfree(int dev, uint b)
   brelse(bp);
 }
 
+// Mount points.
+
+// Mount Table Structure
+struct {
+  struct spinlock lock;
+  struct mntentry mpoint[MOUNTSIZE];
+} mtable;
+
+void
+mountinit(void)
+{
+  initlock(&mtable.lock, "mtable");
+}
+
+int
+mntpoint(int dev, struct inode * ip)
+{
+  struct mntentry *mp;
+
+  acquire(&mtable.lock);
+  for (mp = &mtable.mpoint[0]; mp < &mtable.mpoint[MOUNTSIZE]; mp++) {
+    // This slot is available
+    if (mp->flag == 0) {
+      mp->dev = dev;
+      mp->m_inode = ip;
+      mp->flag |= M_USED;
+
+      release(&mtable.lock);
+      return 1;
+    }
+  }
+  release(&mtable.lock);
+  return 0;
+}
+
 // Inodes.
 //
 // An inode describes a single unnamed file.

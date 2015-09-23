@@ -285,12 +285,34 @@ sys_mount(void)
 {
   int dev;
   char *path;
+  struct inode *ip;
 
   if(argint(0, &dev) < 0 || argstr(1, &path) < 0)
     return -1;
 
   begin_op();
-    cprintf("Called mount with %d and %s", dev, path);
+  if ((ip = namei(path)) == 0) {
+    end_op();
+    return -1;
+  }
+
+  ilock(ip);
+  // We only can mount points over directories nodes
+  if (ip->type != T_DIR) {
+    iunlock(ip);
+    end_op();
+    return -1;
+  }
+
+  ip->type = T_MOUNT;
+  iunlock(ip);
+
+  int mounted = mntpoint(dev, ip);
+
+  if (!mounted) {
+    end_op();
+    return -1;
+  }
   end_op();
 
   return 0;
