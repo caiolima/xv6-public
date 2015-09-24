@@ -22,6 +22,7 @@
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 static void itrunc(struct inode*);
+static struct inode* iget(uint dev, uint inum);
 struct superblock sb[NDEV];   // there should be one per dev, but we run with one dev
 
 // Read the super block.
@@ -111,6 +112,15 @@ mntpoint(int dev, struct inode * ip)
 {
   struct mntentry *mp;
 
+  // Read the Superblock
+  readsb(dev, &sb[dev]);
+
+  cprintf("sb: size %d nblocks %d ninodes %d nlog %d logstart %d inodestart %d bmap start %d\n", sb[dev].size,
+          sb[dev].nblocks, sb[dev].ninodes, sb[dev].nlog, sb[dev].logstart, sb[dev].inodestart, sb[dev].bmapstart);
+
+  // Read the root device
+  struct inode *devrtip = iget(dev, ROOTINO);
+
   acquire(&mtable.lock);
   for (mp = &mtable.mpoint[0]; mp < &mtable.mpoint[MOUNTSIZE]; mp++) {
     // This slot is available
@@ -118,6 +128,8 @@ mntpoint(int dev, struct inode * ip)
       mp->dev = dev;
       mp->m_inode = ip;
       mp->flag |= M_USED;
+      mp->sb = &sb[dev];
+      mp->m_rtinode = devrtip;
 
       release(&mtable.lock);
       return 1;

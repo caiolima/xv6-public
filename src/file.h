@@ -30,6 +30,7 @@ struct inode {
 struct mntentry {
   struct inode *m_inode;
   struct inode *m_rtinode; // Root inode for device
+  struct superblock *sb;
   int dev;  // Mounted device
   int flag; // Flag
 };
