@@ -5,6 +5,8 @@ _*
 *.asm
 *.sym
 *.img
+cscope.*
+src/dist/
 vectors.S
 bootblock
 entryother

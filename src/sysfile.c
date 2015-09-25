@@ -305,9 +305,9 @@ sys_mount(void)
   }
 
   ip->type = T_MOUNT;
-  iunlock(ip);
-
   int mounted = mntpoint(dev, ip);
+
+  iunlock(ip);
 
   if (!mounted) {
     end_op();

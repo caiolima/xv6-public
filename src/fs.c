@@ -115,9 +115,6 @@ mntpoint(int dev, struct inode * ip)
   // Read the Superblock
   readsb(dev, &sb[dev]);
 
-  cprintf("sb: size %d nblocks %d ninodes %d nlog %d logstart %d inodestart %d bmap start %d\n", sb[dev].size,
-          sb[dev].nblocks, sb[dev].ninodes, sb[dev].nlog, sb[dev].logstart, sb[dev].inodestart, sb[dev].bmapstart);
-
   // Read the root device
   struct inode *devrtip = iget(dev, ROOTINO);
 
