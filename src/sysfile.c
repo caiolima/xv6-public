@@ -281,6 +281,44 @@ create(char *path, short type, short major, short minor)
 }
 
 int
+sys_mount(void)
+{
+  int dev;
+  char *path;
+  struct inode *ip;
+
+  if(argint(0, &dev) < 0 || argstr(1, &path) < 0)
+    return -1;
+
+  begin_op();
+  if ((ip = namei(path)) == 0) {
+    end_op();
+    return -1;
+  }
+
+  ilock(ip);
+  // We only can mount points over directories nodes
+  if (ip->type != T_DIR && ip->ref > 1) {
+    iunlock(ip);
+    end_op();
+    return -1;
+  }
+
+  ip->type = T_MOUNT;
+  int mounted = mntpoint(dev, ip);
+
+  iunlock(ip);
+
+  if (!mounted) {
+    end_op();
+    return -1;
+  }
+  end_op();
+
+  return 0;
+}
+
+int
 sys_open(void)
 {
   char *path;

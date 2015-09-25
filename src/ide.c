@@ -53,6 +53,8 @@ ideinit(void)
   initlock(&idelock, "ide");
   picenable(IRQ_IDE);
   ioapicenable(IRQ_IDE, ncpu - 1);
+  picenable(IRQ_IDE + 1);
+  ioapicenable(IRQ_IDE + 1, ncpu - 1);
   idewait(0);
 
   // Check if disk 1 is present
@@ -65,11 +67,21 @@ ideinit(void)
   }
 
   // Check if disk 2 is present
-  outb(0x1f6, 0xe0 | (2<<4));
+  outb(0x176, 0xe0 | (0<<4));
   for(i=0; i<1000; i++){
-    if(inb(0x1f7) != 0){
+    if(inb(0x177) != 0){
       havedisk2 = 1;
-      cprintf("Identified disk 2\n");
+      cprintf("Identified disk 2 on 0\n");
+      break;
+    }
+  }
+
+  // Check if disk 2 is present
+  outb(0x176, 0xe0 | (1<<4));
+  for(i=0; i<1000; i++){
+    if(inb(0x177) != 0){
+      havedisk2 = 1;
+      cprintf("Identified disk 2 on 1\n");
       break;
     }
   }
@@ -86,30 +98,52 @@ idestart(struct buf *b)
     panic("idestart");
   if(b->blockno >= FSSIZE)
     panic("incorrect blockno");
+
+  // Verify if the device is from Primary or Secodary BUS
+  int baseport;
+  if (b->dev <= 1) {
+    baseport = 0x1f0;
+  } else {
+    baseport = 0x170;
+  }
+
   int sector_per_block =  BSIZE/SECTOR_SIZE;
   int sector = b->blockno * sector_per_block;
 
   if (sector_per_block > 7) panic("idestart");
 
   idewait(0);
-  outb(0x3f6, 0);  // generate interrupt
-  outb(0x1f2, sector_per_block);  // number of sectors
-  outb(0x1f3, sector & 0xff);
-  outb(0x1f4, (sector >> 8) & 0xff);
-  outb(0x1f5, (sector >> 16) & 0xff);
-  outb(0x1f6, 0xe0 | ((b->dev&1)<<4) | ((sector>>24)&0x0f));
-  if(b->flags & B_DIRTY){
-    outb(0x1f7, IDE_CMD_WRITE);
-    outsl(0x1f0, b->data, BSIZE/4);
+
+  if (b->dev <= 1) {
+    outb(0x3f6, 0);  // generate interrupt to primary bus
   } else {
-    outb(0x1f7, IDE_CMD_READ);
+    outb(0x376, 0);  // generate interrupt to secondary bus
+  }
+
+  outb(baseport + 2, sector_per_block);  // number of sectors
+  outb(baseport + 3, sector & 0xff);
+  outb(baseport + 4, (sector >> 8) & 0xff);
+  outb(baseport + 5, (sector >> 16) & 0xff);
+  outb(baseport + 6, 0xe0 | ((b->dev&1)<<4) | ((sector>>24)&0x0f));
+  if(b->flags & B_DIRTY){
+    outb(baseport + 7, IDE_CMD_WRITE);
+    outsl(baseport, b->data, BSIZE/4);
+  } else {
+    outb(baseport + 7, IDE_CMD_READ);
   }
 }
 
 // Interrupt handler.
 void
-ideintr(void)
+ideintr(int secflag)
 {
+  int port;
+  if (!secflag) {
+    port = 0x1f0;
+  } else {
+    port = 0x170;
+  }
+
   struct buf *b;
 
   // First queued buffer is the active request.
@@ -123,7 +157,7 @@ ideintr(void)
 
   // Read data if needed.
   if(!(b->flags & B_DIRTY) && idewait(1) >= 0)
-    insl(0x1f0, b->data, BSIZE/4);
+    insl(port, b->data, BSIZE/4);
 
   // Wake process waiting for this buf.
   b->flags |= B_VALID;

@@ -26,6 +26,17 @@ struct inode {
 #define I_BUSY 0x1
 #define I_VALID 0x2
 
+// Mount Table Entry
+struct mntentry {
+  struct inode *m_inode;
+  struct inode *m_rtinode; // Root inode for device
+  struct superblock *sb;
+  int dev;  // Mounted device
+  int flag; // Flag
+};
+
+#define M_USED 0x1
+
 // table mapping major device number to
 // device functions
 struct devsw {

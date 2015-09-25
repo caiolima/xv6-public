@@ -23,6 +23,7 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
+int mount(int dev, char* path);
 
 // ulib.c
 int stat(char*, struct stat*);

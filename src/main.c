@@ -31,6 +31,7 @@ main(void)
   tvinit();        // trap vectors
   binit();         // buffer cache
   fileinit();      // file table
+  mountinit();     // mount table
   ideinit();       // disk
   if(!ismp)
     timerinit();   // uniprocessor timer

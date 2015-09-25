@@ -57,11 +57,13 @@ trap(struct trapframe *tf)
     lapiceoi();
     break;
   case T_IRQ0 + IRQ_IDE:
-    ideintr();
+    ideintr(0);
     lapiceoi();
     break;
-  case T_IRQ0 + IRQ_IDE+1:
-    // Bochs generates spurious IDE1 interrupts.
+  case T_IRQ0 + IRQ_IDE + 1:
+    // Interrupt from device 2
+    ideintr(1);
+    lapiceoi();
     break;
   case T_IRQ0 + IRQ_KBD:
     kbdintr();
@@ -77,7 +79,7 @@ trap(struct trapframe *tf)
             cpu->id, tf->cs, tf->eip);
     lapiceoi();
     break;
-   
+
   //PAGEBREAK: 13
   default:
     if(proc == 0 || (tf->cs&3) == 0){
