@@ -132,7 +132,7 @@ mtablemntinode(struct inode * ip)
   acquire(&mtable.lock);
   for (mp = &mtable.mpoint[0]; mp < &mtable.mpoint[MOUNTSIZE]; mp++) {
     if (mp->m_rtinode->dev == ip->dev && mp->m_rtinode->inum == ip->inum) {
-      mntinode = mp->m_rtinode;
+      mntinode = mp->m_inode;
       release(&mtable.lock);
 
       return mntinode;
@@ -626,7 +626,7 @@ dirlookup(struct inode *dp, char *name, uint *poff)
   uint off, inum;
   struct dirent de;
 
-  if(dp->type != T_DIR)
+  if(dp->type == T_FILE || dp->type == T_DEV)
     panic("dirlookup not DIR");
 
   for(off = 0; off < dp->size; off += sizeof(de)){
@@ -742,20 +742,20 @@ namex(char *path, int nameiparent, char *name)
       return ip;
     }
 
-    /* component_search: */
+    component_search:
     if((next = dirlookup(ip, name, 0)) == 0){
       iunlockput(ip);
       return 0;
     }
 
-    /* if (next->inum == ROOTINO && isinoderoot(ip) && (strncmp(name, "..", 2) == 0)) { */
-    /*   struct inode *mntinode = mtablemntinode(ip); */
-    /*   iunlockput(ip); */
-    /*   ip = mntinode; */
-    /*   ilock(ip); */
-    /*   ip->ref++; */
-    /*   goto component_search; */
-    /* } */
+    if (next->inum == ROOTINO && isinoderoot(ip) && (strncmp(name, "..", 2) == 0)) {
+      struct inode *mntinode = mtablemntinode(ip);
+      iunlockput(ip);
+      ip = mntinode;
+      ilock(ip);
+      ip->ref++;
+      goto component_search;
+    }
 
     iunlockput(ip);
 
