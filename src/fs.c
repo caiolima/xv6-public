@@ -101,6 +101,65 @@ struct {
   struct mntentry mpoint[MOUNTSIZE];
 } mtable;
 
+// This function returns the root inode for the mount on inode
+struct inode *
+mtablertinode(struct inode * ip)
+{
+  struct inode *rtinode;
+  struct mntentry *mp;
+
+  acquire(&mtable.lock);
+  for (mp = &mtable.mpoint[0]; mp < &mtable.mpoint[MOUNTSIZE]; mp++) {
+    if (mp->m_inode->dev == ip->dev && mp->m_inode->inum == ip->inum) {
+      rtinode = mp->m_rtinode;
+      release(&mtable.lock);
+
+      return rtinode;
+    }
+  }
+  release(&mtable.lock);
+
+  return 0;
+}
+
+// This function returns the mounted on inode for the root inode
+struct inode *
+mtablemntinode(struct inode * ip)
+{
+  struct inode *mntinode;
+  struct mntentry *mp;
+
+  acquire(&mtable.lock);
+  for (mp = &mtable.mpoint[0]; mp < &mtable.mpoint[MOUNTSIZE]; mp++) {
+    if (mp->m_rtinode->dev == ip->dev && mp->m_rtinode->inum == ip->inum) {
+      mntinode = mp->m_inode;
+      release(&mtable.lock);
+
+      return mntinode;
+    }
+  }
+  release(&mtable.lock);
+
+  return 0;
+}
+
+int
+isinoderoot(struct inode* ip)
+{
+  struct mntentry *mp;
+
+  acquire(&mtable.lock);
+  for (mp = &mtable.mpoint[0]; mp < &mtable.mpoint[MOUNTSIZE]; mp++) {
+    if (mp->m_rtinode->dev == ip->dev && mp->m_rtinode->inum == ip->inum) {
+      release(&mtable.lock);
+      return 1;
+    }
+  }
+  release(&mtable.lock);
+
+  return 0;
+}
+
 void
 mountinit(void)
 {
@@ -272,6 +331,21 @@ iget(uint dev, uint inum)
   empty = 0;
   for(ip = &icache.inode[0]; ip < &icache.inode[NINODE]; ip++){
     if(ip->ref > 0 && ip->dev == dev && ip->inum == inum){
+
+      // If the current inode is an mount point
+      if (ip->type == T_MOUNT) {
+        struct inode *rinode = mtablertinode(ip);
+
+        if (rinode == 0) {
+          panic("Invalid Inode on Mount Table");
+        }
+
+        rinode->ref++;
+
+        release(&icache.lock);
+        return rinode;
+      }
+
       ip->ref++;
       release(&icache.lock);
       return ip;
@@ -552,7 +626,7 @@ dirlookup(struct inode *dp, char *name, uint *poff)
   uint off, inum;
   struct dirent de;
 
-  if(dp->type != T_DIR)
+  if(dp->type == T_FILE || dp->type == T_DEV)
     panic("dirlookup not DIR");
 
   for(off = 0; off < dp->size; off += sizeof(de)){
@@ -667,11 +741,24 @@ namex(char *path, int nameiparent, char *name)
       iunlock(ip);
       return ip;
     }
+
+    component_search:
     if((next = dirlookup(ip, name, 0)) == 0){
       iunlockput(ip);
       return 0;
     }
+
+    if (next->inum == ROOTINO && isinoderoot(ip) && (strncmp(name, "..", 2) == 0)) {
+      struct inode *mntinode = mtablemntinode(ip);
+      iunlockput(ip);
+      ip = mntinode;
+      ilock(ip);
+      ip->ref++;
+      goto component_search;
+    }
+
     iunlockput(ip);
+
     ip = next;
   }
   if(nameiparent){
