@@ -35,6 +35,8 @@ struct logheader {
   int block[LOGSIZE];
 };
 
+#define NLOG 3   // Max number of active logs
+
 struct log {
   struct spinlock lock;
   int start;
@@ -52,11 +54,22 @@ static void commit();
 void
 initlog(int dev)
 {
+  char devnum[3];
+  itoa(12, devnum);
+  /* char out[16]; */
+
+  cprintf("Debug%s\n", devnum);
+
+  /* strconcat(out, "log ", devnum); */
+
+  /* cprintf(out); cprintf("\n"); */
+
   if (sizeof(struct logheader) >= BSIZE)
     panic("initlog: too big logheader");
 
   struct superblock sb;
   initlock(&log.lock, "log");
+
   readsb(dev, &sb);
   log.start = sb.logstart;
   log.size = sb.nlog;
