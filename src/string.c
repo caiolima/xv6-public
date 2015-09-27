@@ -125,9 +125,14 @@ void
 strconcat(char* r, const char* a, const char* b)
 {
   int asize = strlen(a), bsize = strlen(b);
+  int i, j;
 
   strncpy(r, a, asize);
 
-  safestrcpy(r+asize, b, bsize);
+  for (i = asize, j = 0; j < bsize; j++) {
+   r[i] = b[j];
+  }
+
+  r[asize + bsize] = 0;
 }
 
