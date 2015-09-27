@@ -315,6 +315,8 @@ sys_mount(void)
   }
   end_op();
 
+  initlog(dev);
+
   return 0;
 }
 

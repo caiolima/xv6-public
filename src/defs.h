@@ -142,6 +142,8 @@ char*           safestrcpy(char*, const char*, int);
 int             strlen(const char*);
 int             strncmp(const char*, const char*, uint);
 char*           strncpy(char*, const char*, int);
+void            strconcat(char*, const char*, const char*);
+void            itoa(int, char*);
 
 // syscall.c
 int             argint(int, int*);
