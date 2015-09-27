@@ -290,7 +290,6 @@ sys_mount(void)
   if(argint(0, &dev) < 0 || argstr(1, &path) < 0)
     return -1;
 
-  begin_op();
   if ((ip = namei(path)) == 0) {
     end_op();
     return -1;
@@ -313,9 +312,6 @@ sys_mount(void)
     end_op();
     return -1;
   }
-  end_op();
-
-  initlog(dev);
 
   return 0;
 }

@@ -192,6 +192,9 @@ mntpoint(int dev, struct inode * ip)
     }
   }
   release(&mtable.lock);
+
+  initlog(dev);
+
   return 0;
 }
 
