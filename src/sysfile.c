@@ -283,36 +283,44 @@ create(char *path, short type, short major, short minor)
 int
 sys_mount(void)
 {
-  int dev;
+  char *devf;
   char *path;
-  struct inode *ip;
+  struct inode *ip, *devi;
 
-  if(argint(0, &dev) < 0 || argstr(1, &path) < 0)
-    return -1;
-
-  if ((ip = namei(path)) == 0) {
-    end_op();
+  if (argstr(0, &devf) < 0 || argstr(1, &path) < 0) {
     return -1;
   }
 
-  ilock(ip);
-  // We only can mount points over directories nodes
+  if ((ip = namei(path)) == 0 || (devi = namei(devf)) == 0) {
+    return -1;
+  }
+
+  ilock(ip); ilock(devi);
+  // we only can mount points over directories nodes
   if (ip->type != T_DIR && ip->ref > 1) {
-    iunlock(ip);
-    end_op();
+    iunlock(ip); iunlock(devi);
+    return -1;
+  }
+
+  // The device inode should be T_DEV
+  if (devi->type != T_DEV) {
+    iunlock(ip); iunlock(devi);
+    return -1;
+  }
+
+  if (bdev_open(devi) != 0) {
+    iunlock(ip); iunlock(devi);
     return -1;
   }
 
   ip->type = T_MOUNT;
-  int mounted = mntpoint(dev, ip);
+  int mounted = mntpoint(devi->minor, ip);
 
-  iunlock(ip);
+  iunlock(ip); iunlock(devi);
 
   if (!mounted) {
-    end_op();
     return -1;
   }
-
   return 0;
 }
 

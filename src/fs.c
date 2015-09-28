@@ -188,12 +188,12 @@ mntpoint(int dev, struct inode * ip)
       mp->m_rtinode = devrtip;
 
       release(&mtable.lock);
+
+      initlog(dev);
       return 1;
     }
   }
   release(&mtable.lock);
-
-  initlog(dev);
 
   return 0;
 }

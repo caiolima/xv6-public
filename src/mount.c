@@ -11,7 +11,7 @@ main(int argc, char *argv[])
     exit();
   }
 
-  if(mount(atoi(argv[1]), argv[2]) < 0){
+  if(mount(argv[1], argv[2]) < 0){
     printf(2, "mount: failed to mounting device\n");
   }
 
