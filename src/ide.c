@@ -11,6 +11,7 @@
 #include "spinlock.h"
 #include "fs.h"
 #include "buf.h"
+#include "device.h"
 
 #define SECTOR_SIZE   512
 #define IDE_BSY       0x80
@@ -21,6 +22,8 @@
 #define IDE_CMD_READ  0x20
 #define IDE_CMD_WRITE 0x30
 
+#define IDEMAJOR 0
+
 // idequeue points to the buf now being read/written to the disk.
 // idequeue->qnext points to the next buf to be processed.
 // You must hold idelock while manipulating queue.
@@ -28,9 +31,66 @@
 static struct spinlock idelock;
 static struct buf *idequeue;
 
-static int havedisk1;
-static int havedisk2;
+static int havediskroot;
 static void idestart(struct buf*);
+static int ide_open(int minor);
+static int ide_close(int minor);
+
+struct bdev_ops ideops = {
+  .open = &ide_open,
+  .close = &ide_close
+};
+
+// define the ide device struct
+struct bdev idedev = {
+  .major = IDEMAJOR,
+  .ops = &ideops
+};
+
+// IDE devices operations
+
+/**
+ * This operation verifies if the current disk n is attatched.
+ **/
+int
+ide_open(int minor)
+{
+  int i;
+
+  cprintf("IDE open %d\n", minor);
+  // Disk 0 is always attatched because the kernel is located there
+  if (minor == 0)
+    return 0;
+
+  // It is the already attatched device
+  if (minor == ROOTDEV)
+    return havediskroot;
+
+  if (minor >= 2) {
+    // check if the disk is attatched
+    outb(0x176, 0xe0 | (minor & 1<<4));
+    for (i=0; i<1000; i++) {
+      if (inb(0x177) != 0) {
+        return 0;
+      }
+    }
+  } else {
+    outb(0x1f6, 0xe0 | (minor & 1<<4));
+    for (i=0; i<1000; i++) {
+      if (inb(0x1f7) != 0) {
+        return 0;
+      }
+    }
+  }
+
+  return -1;
+}
+
+int
+ide_close(int minor)
+{
+  return 0;
+}
 
 // Wait for IDE disk to become ready.
 static int
@@ -55,36 +115,40 @@ ideinit(void)
   ioapicenable(IRQ_IDE, ncpu - 1);
   picenable(IRQ_IDE + 1);
   ioapicenable(IRQ_IDE + 1, ncpu - 1);
+
+  if (registerbdev(idedev) != 0 )
+    panic("Register IDE device driver");
+
   idewait(0);
 
   // Check if disk 1 is present
   outb(0x1f6, 0xe0 | (1<<4));
   for(i=0; i<1000; i++){
     if(inb(0x1f7) != 0){
-      havedisk1 = 1;
+      havediskroot = 1;
       break;
     }
   }
 
   // Check if disk 2 is present
-  outb(0x176, 0xe0 | (0<<4));
-  for(i=0; i<1000; i++){
-    if(inb(0x177) != 0){
-      havedisk2 = 1;
-      cprintf("Identified disk 2 on 0\n");
-      break;
-    }
-  }
+  /* outb(0x176, 0xe0 | (0<<4)); */
+  /* for(i=0; i<1000; i++){ */
+  /*   if(inb(0x177) != 0){ */
+  /*     havedisk2 = 1; */
+  /*     cprintf("Identified disk 2 on 0\n"); */
+  /*     break; */
+  /*   } */
+  /* } */
 
   // Check if disk 2 is present
-  outb(0x176, 0xe0 | (1<<4));
-  for(i=0; i<1000; i++){
-    if(inb(0x177) != 0){
-      havedisk2 = 1;
-      cprintf("Identified disk 2 on 1\n");
-      break;
-    }
-  }
+  /* outb(0x176, 0xe0 | (1<<4)); */
+  /* for(i=0; i<1000; i++){ */
+  /*   if(inb(0x177) != 0){ */
+  /*     havedisk2 = 1; */
+  /*     cprintf("Identified disk 2 on 1\n"); */
+  /*     break; */
+  /*   } */
+  /* } */
 
   // Switch back to disk 0.
   outb(0x1f6, 0xe0 | (0<<4));
@@ -184,7 +248,7 @@ iderw(struct buf *b)
     panic("iderw: buf not busy");
   if((b->flags & (B_VALID|B_DIRTY)) == B_VALID)
     panic("iderw: nothing to do");
-  if(b->dev != 0 && !havedisk1)
+  if(b->dev != 0 && !havediskroot)
     panic("iderw: ide disk 1 not present");
 
   acquire(&idelock);  //DOC:acquire-lock

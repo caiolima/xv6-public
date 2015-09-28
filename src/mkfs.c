@@ -16,13 +16,14 @@
 #endif
 
 #define NINODES 200
+#define HDMAJOR 0
 
 // Disk layout:
 // [ boot block | sb block | log | inode blocks | free bit map | data blocks ]
 
 int nbitmap = FSSIZE/(BSIZE*8) + 1;
 int ninodeblocks = NINODES / IPB + 1;
-int nlog = LOGSIZE;  
+int nlog = LOGSIZE;
 int nmeta;    // Number of meta blocks (boot, sb, nlog, inode, bitmap)
 int nblocks;  // Number of data blocks
 
@@ -67,8 +68,8 @@ xint(uint x)
 int
 main(int argc, char *argv[])
 {
-  int i, cc, fd;
-  uint rootino, inum, off;
+  int i, cc, fd, isrootfs = 1, argoff = 0;
+  uint rootino, inum, off, devino, hdino;
   struct dirent de;
   char buf[BSIZE];
   struct dinode din;
@@ -77,18 +78,24 @@ main(int argc, char *argv[])
   static_assert(sizeof(int) == 4, "Integers must be 4 bytes!");
 
   if(argc < 2){
-    fprintf(stderr, "Usage: mkfs fs.img files...\n");
+    fprintf(stderr, "Usage: mkfs [-noroot] fs.img files...\n");
     exit(1);
   }
 
   assert((BSIZE % sizeof(struct dinode)) == 0);
   assert((BSIZE % sizeof(struct dirent)) == 0);
 
-  fsfd = open(argv[1], O_RDWR|O_CREAT|O_TRUNC, 0666);
+  if (strcmp(argv[1], "-noroot") == 0) {
+    isrootfs = 0;
+    argoff = 1;
+  }
+
+  fsfd = open(argv[1 + argoff], O_RDWR|O_CREAT|O_TRUNC, 0666);
   if(fsfd < 0){
-    perror(argv[1]);
+    perror(argv[1 + argoff]);
     exit(1);
   }
+
 
   // 1 fs block = 1 disk sector
   nmeta = 2 + nlog + ninodeblocks + nbitmap;
@@ -127,14 +134,64 @@ main(int argc, char *argv[])
   strcpy(de.name, "..");
   iappend(rootino, &de, sizeof(de));
 
-  for(i = 2; i < argc; i++){
+  if (isrootfs) {
+    // Create the dev folder
+    devino = ialloc(T_DIR);
+    bzero(&de, sizeof(de));
+    de.inum = xshort(devino);
+    strcpy(de.name, "dev");
+    iappend(rootino, &de, sizeof(de));
+
+    bzero(&de, sizeof(de));
+    de.inum = xshort(devino);
+    strcpy(de.name, ".");
+    iappend(devino, &de, sizeof(de));
+
+    bzero(&de, sizeof(de));
+    de.inum = xshort(rootino);
+    strcpy(de.name, "..");
+    iappend(devino, &de, sizeof(de));
+
+    // Create the device files to access hd
+    hdino = ialloc(T_DEV);
+    bzero(&de, sizeof(de));
+    de.inum = xshort(hdino);
+    strcpy(de.name, "hda");
+    iappend(devino, &de, sizeof(de));
+    rinode(hdino, &din);
+    din.major = HDMAJOR;
+    din.minor = 0;
+    winode(hdino, &din);
+
+    hdino = ialloc(T_DEV);
+    bzero(&de, sizeof(de));
+    de.inum = xshort(hdino);
+    strcpy(de.name, "hdb");
+    iappend(devino, &de, sizeof(de));
+    rinode(hdino, &din);
+    din.major = HDMAJOR;
+    din.minor = 1;
+    winode(hdino, &din);
+
+    hdino = ialloc(T_DEV);
+    bzero(&de, sizeof(de));
+    de.inum = xshort(hdino);
+    strcpy(de.name, "hdc");
+    iappend(devino, &de, sizeof(de));
+    rinode(hdino, &din);
+    din.major = HDMAJOR;
+    din.minor = 2;
+    winode(hdino, &din);
+  }
+
+  for(i = 2 + argoff; i < argc; i++){
     assert(index(argv[i], '/') == 0);
 
     if((fd = open(argv[i], 0)) < 0){
       perror(argv[i]);
       exit(1);
     }
-    
+
     // Skip leading _ in name when writing to file system.
     // The binaries are named _rm, _cat, etc. to keep the
     // build operating system from trying to execute them

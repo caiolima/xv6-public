@@ -32,6 +32,7 @@ main(void)
   binit();         // buffer cache
   fileinit();      // file table
   mountinit();     // mount table
+  bdevtableinit(); // block device table
   ideinit();       // disk
   if(!ismp)
     timerinit();   // uniprocessor timer

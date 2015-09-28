@@ -1,6 +1,7 @@
 OBJS = \
 	bio.o\
 	console.o\
+	device.o\
 	exec.o\
 	file.o\
 	fs.o\
@@ -176,7 +177,7 @@ UPROGS=\
 
 fs.img: mkfs README $(UPROGS)
 	./mkfs fs.img README $(UPROGS)
-	./mkfs fs2.img README
+	./mkfs -noroot fs2.img README
 
 -include *.d
 
