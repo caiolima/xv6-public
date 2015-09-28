@@ -287,11 +287,11 @@ sys_mount(void)
   char *path;
   struct inode *ip, *devi;
 
-  if(argstr(0, &devf) < 0 || argstr(1, &path) < 0)
+  if (argstr(0, &devf) < 0 || argstr(1, &path) < 0) {
     return -1;
+  }
 
   if ((ip = namei(path)) == 0 || (devi = namei(devf)) == 0) {
-    end_op();
     return -1;
   }
 
@@ -299,20 +299,17 @@ sys_mount(void)
   // we only can mount points over directories nodes
   if (ip->type != T_DIR && ip->ref > 1) {
     iunlock(ip); iunlock(devi);
-    end_op();
     return -1;
   }
 
   // The device inode should be T_DEV
   if (devi->type != T_DEV) {
     iunlock(ip); iunlock(devi);
-    end_op();
     return -1;
   }
 
   if (bdev_open(devi) != 0) {
     iunlock(ip); iunlock(devi);
-    end_op();
     return -1;
   }
 
@@ -322,10 +319,8 @@ sys_mount(void)
   iunlock(ip); iunlock(devi);
 
   if (!mounted) {
-    end_op();
     return -1;
   }
-
   return 0;
 }
 
