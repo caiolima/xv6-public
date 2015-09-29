@@ -167,30 +167,40 @@ mountinit(void)
 }
 
 int
-mntpoint(int dev, struct inode * ip)
+mntpoint(struct inode *devi, struct inode *ip)
 {
   struct mntentry *mp;
 
   // Read the Superblock
-  readsb(dev, &sb[dev]);
+  readsb(devi->minor, &sb[devi->minor]);
 
   // Read the root device
-  struct inode *devrtip = iget(dev, ROOTINO);
+  struct inode *devrtip = iget(devi->minor, ROOTINO);
 
   acquire(&mtable.lock);
   for (mp = &mtable.mpoint[0]; mp < &mtable.mpoint[MOUNTSIZE]; mp++) {
     // This slot is available
     if (mp->flag == 0) {
-      mp->dev = dev;
+found_slot:
+      mp->dev = devi->minor;
       mp->m_inode = ip;
       mp->flag |= M_USED;
-      mp->sb = &sb[dev];
+      mp->sb = &sb[devi->minor];
       mp->m_rtinode = devrtip;
 
       release(&mtable.lock);
 
-      initlog(dev);
+      initlog(devi->minor);
       return 1;
+    } else {
+      // The disk is already mounted
+      if (mp->dev == devi->minor) {
+        release(&mtable.lock);
+        return 0;
+      }
+
+      if (ip->dev == mp->m_inode->dev && ip->inum == mp->m_inode->inum)
+        goto found_slot;
     }
   }
   release(&mtable.lock);
