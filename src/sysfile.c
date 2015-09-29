@@ -313,14 +313,21 @@ sys_mount(void)
     return -1;
   }
 
-  ip->type = T_MOUNT;
-  int mounted = mntpoint(devi->minor, ip);
-
-  iunlock(ip); iunlock(devi);
-
-  if (!mounted) {
+  if (devi->minor == 0 || devi->minor == ROOTDEV) {
+    iunlock(ip); iunlock(devi);
     return -1;
   }
+
+  int mounted = mntpoint(devi, ip);
+
+  if (!mounted) {
+    iunlock(ip); iunlock(devi);
+    return -1;
+  }
+
+  ip->type = T_MOUNT;
+
+  iunlock(ip); iunlock(devi);
   return 0;
 }
 

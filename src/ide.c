@@ -57,7 +57,6 @@ ide_open(int minor)
 {
   int i;
 
-  cprintf("IDE open %d\n", minor);
   // Disk 0 is always attatched because the kernel is located there
   if (minor == 0)
     return 0;
