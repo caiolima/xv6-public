@@ -27,6 +27,7 @@ OBJS = \
 	trap.o\
 	uart.o\
 	vectors.o\
+	vfs.o\
 	vm.o\
 
 # Cross-compiling (e.g., on Mac OS X)
