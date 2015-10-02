@@ -11,6 +11,7 @@
 #include "buf.h"
 #include "file.h"
 #include "vfs.h"
+#include "vfsmount.h"
 
 int s5fs_init(void);
 int s5_mount(struct inode *, struct inode *);

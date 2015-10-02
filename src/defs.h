@@ -8,7 +8,6 @@ struct rtcdate;
 struct spinlock;
 struct stat;
 struct superblock;
-struct mntentry;
 struct bdev_ops;
 struct bdev;
 struct filesystem_type;
@@ -39,8 +38,6 @@ int             filewrite(struct file*, char*, int n);
 
 // fs.c
 void            readsb(int dev, struct superblock *sb);
-void            mountinit(void);
-int             mntpoint(struct inode *, struct inode *);
 int             dirlink(struct inode*, char*, uint);
 struct inode*   dirlookup(struct inode*, char*, uint*);
 struct inode*   ialloc(uint, short);

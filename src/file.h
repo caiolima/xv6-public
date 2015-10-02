@@ -30,23 +30,6 @@ struct inode {
 #define I_BUSY 0x1
 #define I_VALID 0x2
 
-// Mount Table Entry
-struct mntentry {
-  struct inode *m_inode;
-  struct inode *m_rtinode; // Root inode for device
-  void *pdata;             // Private date of mountentry. Almost is a superblock
-  int dev;                 // Mounted device
-  int flag;                // Flag
-};
-
-// Mount Table Structure
-struct {
-  struct spinlock lock;
-  struct mntentry mpoint[MOUNTSIZE];
-} mtable;
-
-#define M_USED 0x1
-
 // Inode main operations
 struct inode* iget(uint dev, uint inum);
 
