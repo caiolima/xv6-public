@@ -51,7 +51,7 @@ s5_mount(struct inode *devi, struct inode *ip)
   readsb(devi->minor, &sb[devi->minor]);
 
   // Read the root device
-  struct inode *devrtip = iget(devi->minor, ROOTINO);
+  struct inode *devrtip = s5_getroot(devi->major, devi->minor);
 
   acquire(&mtable.lock);
   for (mp = &mtable.mpoint[0]; mp < &mtable.mpoint[MOUNTSIZE]; mp++) {
@@ -91,8 +91,8 @@ s5_unmount(struct inode *devi)
 }
 
 struct inode *
-s5_getroot(void)
+s5_getroot(int major, int minor)
 {
-  return 0;
+  return iget(minor, ROOTINO);
 }
 

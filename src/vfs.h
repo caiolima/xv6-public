@@ -11,7 +11,7 @@ struct vfs_operations {
   int (*fs_init)(void);
   int (*mount)(struct inode *, struct inode *);
   int (*unmount)(struct inode *);
-  struct inode *(*getroot)(void);
+  struct inode *(*getroot)(int, int);
 };
 
 struct filesystem_type {
