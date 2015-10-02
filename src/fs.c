@@ -22,8 +22,6 @@
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 static void itrunc(struct inode*);
-static struct inode* iget(uint dev, uint inum);
-struct superblock sb[NDEV];   // there should be one per dev, but we run with one dev
 
 // Read the super block.
 void
@@ -95,11 +93,7 @@ bfree(int dev, uint b)
 
 // Mount points.
 
-// Mount Table Structure
-struct {
-  struct spinlock lock;
-  struct mntentry mpoint[MOUNTSIZE];
-} mtable;
+
 
 // This function returns the root inode for the mount on inode
 struct inode *
@@ -185,7 +179,7 @@ found_slot:
       mp->dev = devi->minor;
       mp->m_inode = ip;
       mp->flag |= M_USED;
-      mp->sb = &sb[devi->minor];
+      /* mp->sb = &sb[devi->minor]; */
       mp->m_rtinode = devrtip;
 
       release(&mtable.lock);
@@ -284,8 +278,6 @@ iinit(int dev)
           sb[dev].nblocks, sb[dev].ninodes, sb[dev].nlog, sb[dev].logstart, sb[dev].inodestart, sb[dev].bmapstart);
 }
 
-static struct inode* iget(uint dev, uint inum);
-
 //PAGEBREAK!
 // Allocate a new inode with the given type on device dev.
 // A free inode has a type of zero.
@@ -333,7 +325,7 @@ iupdate(struct inode *ip)
 // Find the inode with number inum on device dev
 // and return the in-memory copy. Does not lock
 // the inode and does not read it from disk.
-static struct inode*
+struct inode*
 iget(uint dev, uint inum)
 {
   struct inode *ip, *empty;

@@ -1,3 +1,8 @@
+#include "spinlock.h"
+
+#ifndef XV6_FILE_H_
+#define XV6_FILE_H_
+
 struct file {
   enum { FD_NONE, FD_PIPE, FD_INODE } type;
   int ref; // reference count
@@ -7,7 +12,6 @@ struct file {
   struct inode *ip;
   uint off;
 };
-
 
 // in-memory copy of an inode
 struct inode {
@@ -30,12 +34,23 @@ struct inode {
 struct mntentry {
   struct inode *m_inode;
   struct inode *m_rtinode; // Root inode for device
-  struct superblock *sb;
-  int dev;  // Mounted device
-  int flag; // Flag
+  void *pdata;             // Private date of mountentry. Almost is a superblock
+  int dev;                 // Mounted device
+  int flag;                // Flag
 };
 
+// Mount Table Structure
+struct {
+  struct spinlock lock;
+  struct mntentry mpoint[MOUNTSIZE];
+} mtable;
+
 #define M_USED 0x1
+
+// Inode main operations
+struct inode* iget(uint dev, uint inum);
+
+struct superblock sb[NDEV];
 
 // table mapping major device number to
 // device functions
@@ -50,3 +65,6 @@ extern struct devsw devsw[];
 
 //PAGEBREAK!
 // Blank page.
+
+#endif /* XV6_FILE_H_ */
+

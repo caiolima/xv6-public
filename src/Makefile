@@ -18,6 +18,7 @@ OBJS = \
 	proc.o\
 	spinlock.o\
 	string.o\
+	s5.o\
 	swtch.o\
 	syscall.o\
 	sysfile.o\

@@ -103,6 +103,19 @@ strlen(const char *s)
   return n;
 }
 
+int
+strcmp(const char *p, const char *q)
+{
+  int gtrlen = strlen(p);
+  int qlen = strlen(q);
+
+  if (qlen > gtrlen) gtrlen = qlen;
+
+  return strncmp(p, q, gtrlen);
+}
+
+
+
 void
 itoa(int xx, char *buf)
 {

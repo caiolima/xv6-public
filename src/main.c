@@ -31,6 +31,7 @@ main(void)
   tvinit();        // trap vectors
   binit();         // buffer cache
   fileinit();      // file table
+  initvfssw();     // vfs table init
   mountinit();     // mount table
   bdevtableinit(); // block device table
   ideinit();       // disk
