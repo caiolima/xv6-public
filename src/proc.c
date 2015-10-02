@@ -341,8 +341,11 @@ forkret(void)
     first = 0;
     iinit(ROOTDEV);
     initlog(ROOTDEV);
+    int res = inits5fs();      // init s5 fs
+    if (res != 0)
+      panic("S5 not registered");
   }
-  
+
   // Return to "caller", actually trapret (see allocproc).
 }
 

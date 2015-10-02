@@ -19,11 +19,10 @@
 #include "fs.h"
 #include "buf.h"
 #include "file.h"
+#include "vfsmount.h"
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 static void itrunc(struct inode*);
-static struct inode* iget(uint dev, uint inum);
-struct superblock sb[NDEV];   // there should be one per dev, but we run with one dev
 
 // Read the super block.
 void
@@ -91,121 +90,6 @@ bfree(int dev, uint b)
   bp->data[bi/8] &= ~m;
   log_write(bp);
   brelse(bp);
-}
-
-// Mount points.
-
-// Mount Table Structure
-struct {
-  struct spinlock lock;
-  struct mntentry mpoint[MOUNTSIZE];
-} mtable;
-
-// This function returns the root inode for the mount on inode
-struct inode *
-mtablertinode(struct inode * ip)
-{
-  struct inode *rtinode;
-  struct mntentry *mp;
-
-  acquire(&mtable.lock);
-  for (mp = &mtable.mpoint[0]; mp < &mtable.mpoint[MOUNTSIZE]; mp++) {
-    if (mp->m_inode->dev == ip->dev && mp->m_inode->inum == ip->inum) {
-      rtinode = mp->m_rtinode;
-      release(&mtable.lock);
-
-      return rtinode;
-    }
-  }
-  release(&mtable.lock);
-
-  return 0;
-}
-
-// This function returns the mounted on inode for the root inode
-struct inode *
-mtablemntinode(struct inode * ip)
-{
-  struct inode *mntinode;
-  struct mntentry *mp;
-
-  acquire(&mtable.lock);
-  for (mp = &mtable.mpoint[0]; mp < &mtable.mpoint[MOUNTSIZE]; mp++) {
-    if (mp->m_rtinode->dev == ip->dev && mp->m_rtinode->inum == ip->inum) {
-      mntinode = mp->m_inode;
-      release(&mtable.lock);
-
-      return mntinode;
-    }
-  }
-  release(&mtable.lock);
-
-  return 0;
-}
-
-int
-isinoderoot(struct inode* ip)
-{
-  struct mntentry *mp;
-
-  acquire(&mtable.lock);
-  for (mp = &mtable.mpoint[0]; mp < &mtable.mpoint[MOUNTSIZE]; mp++) {
-    if (mp->m_rtinode->dev == ip->dev && mp->m_rtinode->inum == ip->inum) {
-      release(&mtable.lock);
-      return 1;
-    }
-  }
-  release(&mtable.lock);
-
-  return 0;
-}
-
-void
-mountinit(void)
-{
-  initlock(&mtable.lock, "mtable");
-}
-
-int
-mntpoint(struct inode *devi, struct inode *ip)
-{
-  struct mntentry *mp;
-
-  // Read the Superblock
-  readsb(devi->minor, &sb[devi->minor]);
-
-  // Read the root device
-  struct inode *devrtip = iget(devi->minor, ROOTINO);
-
-  acquire(&mtable.lock);
-  for (mp = &mtable.mpoint[0]; mp < &mtable.mpoint[MOUNTSIZE]; mp++) {
-    // This slot is available
-    if (mp->flag == 0) {
-found_slot:
-      mp->dev = devi->minor;
-      mp->m_inode = ip;
-      mp->flag |= M_USED;
-      mp->sb = &sb[devi->minor];
-      mp->m_rtinode = devrtip;
-
-      release(&mtable.lock);
-
-      initlog(devi->minor);
-      return 1;
-    } else {
-      // The disk is already mounted
-      if (mp->dev == devi->minor) {
-        release(&mtable.lock);
-        return 0;
-      }
-
-      if (ip->dev == mp->m_inode->dev && ip->inum == mp->m_inode->inum)
-        goto found_slot;
-    }
-  }
-  release(&mtable.lock);
-
-  return 0;
 }
 
 // Inodes.
@@ -284,8 +168,6 @@ iinit(int dev)
           sb[dev].nblocks, sb[dev].ninodes, sb[dev].nlog, sb[dev].logstart, sb[dev].inodestart, sb[dev].bmapstart);
 }
 
-static struct inode* iget(uint dev, uint inum);
-
 //PAGEBREAK!
 // Allocate a new inode with the given type on device dev.
 // A free inode has a type of zero.
@@ -333,7 +215,7 @@ iupdate(struct inode *ip)
 // Find the inode with number inum on device dev
 // and return the in-memory copy. Does not lock
 // the inode and does not read it from disk.
-static struct inode*
+struct inode*
 iget(uint dev, uint inum)
 {
   struct inode *ip, *empty;

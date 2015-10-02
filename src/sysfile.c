@@ -13,6 +13,7 @@
 #include "fs.h"
 #include "file.h"
 #include "fcntl.h"
+#include "vfs.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -285,13 +286,21 @@ sys_mount(void)
 {
   char *devf;
   char *path;
+  char *fstype;
   struct inode *ip, *devi;
 
-  if (argstr(0, &devf) < 0 || argstr(1, &path) < 0) {
+  if (argstr(0, &devf) < 0 || argstr(1, &path) < 0 || argstr(2, &fstype) < 0) {
     return -1;
   }
 
   if ((ip = namei(path)) == 0 || (devi = namei(devf)) == 0) {
+    return -1;
+  }
+
+  struct filesystem_type *fs_t = getfs(fstype);
+
+  if (fs_t == 0) {
+    cprintf("FS type not found\n");
     return -1;
   }
 
@@ -318,9 +327,9 @@ sys_mount(void)
     return -1;
   }
 
-  int mounted = mntpoint(devi, ip);
+  int mounted = fs_t->ops->mount(devi, ip);
 
-  if (!mounted) {
+  if (mounted != 0) {
     iunlock(ip); iunlock(devi);
     return -1;
   }

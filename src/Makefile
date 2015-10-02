@@ -18,6 +18,7 @@ OBJS = \
 	proc.o\
 	spinlock.o\
 	string.o\
+	s5.o\
 	swtch.o\
 	syscall.o\
 	sysfile.o\
@@ -27,6 +28,8 @@ OBJS = \
 	trap.o\
 	uart.o\
 	vectors.o\
+	vfs.o\
+	vfsmount.o\
 	vm.o\
 
 # Cross-compiling (e.g., on Mac OS X)

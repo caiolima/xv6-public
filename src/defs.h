@@ -8,9 +8,9 @@ struct rtcdate;
 struct spinlock;
 struct stat;
 struct superblock;
-struct mntentry;
 struct bdev_ops;
 struct bdev;
+struct filesystem_type;
 
 // bio.c
 void            binit(void);
@@ -38,8 +38,6 @@ int             filewrite(struct file*, char*, int n);
 
 // fs.c
 void            readsb(int dev, struct superblock *sb);
-void            mountinit(void);
-int             mntpoint(struct inode *, struct inode *);
 int             dirlink(struct inode*, char*, uint);
 struct inode*   dirlookup(struct inode*, char*, uint*);
 struct inode*   ialloc(uint, short);
@@ -146,6 +144,7 @@ int             strncmp(const char*, const char*, uint);
 char*           strncpy(char*, const char*, int);
 void            strconcat(char*, const char*, const char*);
 void            itoa(int, char*);
+int             strcmp(const char*, const char*);
 
 // syscall.c
 int             argint(int, int*);
@@ -191,6 +190,14 @@ void            bdevtableinit(void);
 int             registerbdev(struct bdev);
 int             unregisterbdev(struct bdev);
 int             bdev_open(struct inode *);
+
+// vfs.c
+void            initvfssw(void);
+int             register_fs(struct filesystem_type *fs);
+struct filesystem_type* getfs(const char *fs_name);
+
+// s5.c
+int             inits5fs(void);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))
