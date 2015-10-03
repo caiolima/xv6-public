@@ -106,7 +106,7 @@ sys_fstat(void)
 {
   struct file *f;
   struct stat *st;
-  
+
   if(argfd(0, 0, &f) < 0 || argptr(1, (void*)&st, sizeof(*st)) < 0)
     return -1;
   return filestat(f, st);
@@ -336,7 +336,13 @@ sys_mount(void)
 
   ip->type = T_MOUNT;
 
+  // Add tis to a table to retrieve the Filesystem type to current minor device
+  acquire(&vfs.lock);
+  vfs.fstype[ip->minor] = fs_t;
+  release(&vfs.lock);
+
   iunlock(ip); iunlock(devi);
+
   return 0;
 }
 

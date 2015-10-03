@@ -1,4 +1,5 @@
 #include "spinlock.h"
+#include "vfs.h"
 
 #ifndef XV6_FILE_H_
 #define XV6_FILE_H_
@@ -12,23 +13,6 @@ struct file {
   struct inode *ip;
   uint off;
 };
-
-// in-memory copy of an inode
-struct inode {
-  uint dev;           // Device number
-  uint inum;          // Inode number
-  int ref;            // Reference count
-  int flags;          // I_BUSY, I_VALID
-
-  short type;         // copy of disk inode
-  short major;
-  short minor;
-  short nlink;
-  uint size;
-  uint addrs[NDIRECT+1];
-};
-#define I_BUSY 0x1
-#define I_VALID 0x2
 
 // Inode main operations
 struct inode* iget(uint dev, uint inum);

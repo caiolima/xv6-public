@@ -15,6 +15,12 @@ struct {
 } vfssw;
 
 void
+initvfs(void)
+{
+  initlock(&vfs.lock, "vfs");
+}
+
+void
 initvfssw(void)
 {
   initlock(&vfssw.lock, "vfssw");
