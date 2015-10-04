@@ -33,6 +33,7 @@ main(void)
   binit();         // buffer cache
   fileinit();      // file table
   initvfssw();     // vfs table init
+  initvfsmlist();  // Init the vfs list
   mountinit();     // mount table
   bdevtableinit(); // block device table
   ideinit();       // disk

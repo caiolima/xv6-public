@@ -1,24 +1,90 @@
 /* * Virtual File System implementation
- *  This layer is respnsible to implement the
+ *  This layer is responsible to implement the
  *  abstraction layer over
  * */
 
+#include "param.h"
 #include "types.h"
 #include "defs.h"
 #include "spinlock.h"
 #include "list.h"
 #include "vfs.h"
 
+/*
+ * Its is a pool to allocate vfs structs.
+ * We use it becase we don't have a kmalloc function.
+ * With an kmalloc implementatios, it need to be removed.
+ */
+static struct {
+  struct spinlock lock;
+  struct vfs vfsentry[MAXVFSSIZE];
+} vfspool;
+
+struct vfs*
+allocvfs()
+{
+  struct vfs *vfs;
+
+  acquire(&vfspool.lock);
+  for (vfs = &vfspool.vfsentry[0]; vfs < &vfspool.vfsentry[MAXVFSSIZE]; vfs++) {
+    if (vfs->flag == VFS_FREE) {
+      vfs->flag |= VFS_USED;
+      release(&vfspool.lock);
+
+      return vfs;
+    }
+  }
+  release(&vfspool.lock);
+
+  return 0;
+}
+
+void
+initvfsmlist(void)
+{
+  initlock(&vfsmlist.lock, "vfsmlist");
+  initlock(&vfspool.lock, "vfspol");
+  INIT_LIST_HEAD(&(vfsmlist.fs_list));
+}
+
+struct vfs*
+getvfsentry(int major, int minor)
+{
+  struct vfs *vfs;
+
+  list_for_each_entry(vfs, &(vfsmlist.fs_list), fs_next) {
+    if (vfs->major == major && vfs->minor == minor) {
+      return vfs;
+    }
+  }
+
+  return 0;
+}
+
+int
+putvfsonlist(int major, int minor, struct filesystem_type *fs_t)
+{
+  struct vfs* nvfs;
+
+  if ((nvfs = allocvfs()) == 0) {
+    return -1;
+  }
+
+  nvfs->major = major;
+  nvfs->minor = minor;
+  nvfs->fs_t  = fs_t;
+
+  acquire(&vfsmlist.lock);
+  list_add_tail(&(nvfs->fs_next), &(vfsmlist.fs_list));
+  release(&vfsmlist.lock);
+
+  return 0;
+}
+
 struct {
   struct spinlock lock;
   struct list_head fs_list;
 } vfssw;
-
-void
-initvfs(void)
-{
-  initlock(&vfs.lock, "vfs");
-}
 
 void
 initvfssw(void)

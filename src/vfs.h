@@ -56,12 +56,31 @@ struct vfs_operations {
 
 /*
  * This is struct is the map block device and its filesystem.
- * It is supporting only one major block device.
+ * Its main job is return the filesystem type of current (major, minor)
+ * mounted device. It is used when it is not possible retrive the
+ * filesystem_type from the inode.
+ */
+struct vfs {
+  int major;
+  int minor;
+  int flag;
+  struct filesystem_type *fs_t;
+  struct list_head fs_next; // Next mounted on vfs
+};
+#define VFS_FREE 0
+#define VFS_USED 1
+
+struct vfs rootsfs; // It is the golbal pointer to root fs entry
+
+/*
+ * This is te representation of mounted lists.
+ * It is defferent from the vfssw, because it is mapping the mounted
+ * on filesystem per (major, minor)
  */
 struct {
   struct spinlock lock;
-  struct filesystem_type *fstype[MAXBDEV];
-} vfs;
+  struct list_head fs_list;
+} vfsmlist;
 
 struct filesystem_type {
   char *name;                 // The filesystem name. Its is used by the mount syscall
@@ -69,7 +88,9 @@ struct filesystem_type {
   struct list_head fs_list;   // This is a list of Filesystems used by vfssw
 };
 
-void            initvfs(void);
+void            initvfsmlist(void);
+struct vfs*     getvfsentry(int major, int minor);
+int             putvfsonlist(int major, int minor, struct filesystem_type *fs_t);
 void            initvfssw(void);
 int             register_fs(struct filesystem_type *fs);
 struct filesystem_type* getfs(const char *fs_name);
