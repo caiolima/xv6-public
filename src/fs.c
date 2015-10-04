@@ -36,61 +36,61 @@ readsb(int dev, struct superblock *sb)
 }
 
 // Zero a block.
-static void
-bzero(int dev, int bno)
-{
-  struct buf *bp;
+/* static void */
+/* bzero(int dev, int bno) */
+/* { */
+/*   struct buf *bp; */
 
-  bp = bread(dev, bno);
-  memset(bp->data, 0, BSIZE);
-  log_write(bp);
-  brelse(bp);
-}
+/*   bp = bread(dev, bno); */
+/*   memset(bp->data, 0, BSIZE); */
+/*   log_write(bp); */
+/*   brelse(bp); */
+/* } */
 
 // Blocks.
 
 // Allocate a zeroed disk block.
-static uint
-balloc(uint dev)
-{
-  int b, bi, m;
-  struct buf *bp;
+/* static uint */
+/* balloc(uint dev) */
+/* { */
+/*   int b, bi, m; */
+/*   struct buf *bp; */
 
-  bp = 0;
-  for(b = 0; b < sb[dev].size; b += BPB){
-    bp = bread(dev, BBLOCK(b, sb[dev]));
-    for(bi = 0; bi < BPB && b + bi < sb[dev].size; bi++){
-      m = 1 << (bi % 8);
-      if((bp->data[bi/8] & m) == 0){  // Is block free?
-        bp->data[bi/8] |= m;  // Mark block in use.
-        log_write(bp);
-        brelse(bp);
-        bzero(dev, b + bi);
-        return b + bi;
-      }
-    }
-    brelse(bp);
-  }
-  panic("balloc: out of blocks");
-}
+/*   bp = 0; */
+/*   for(b = 0; b < sb[dev].size; b += BPB){ */
+/*     bp = bread(dev, BBLOCK(b, sb[dev])); */
+/*     for(bi = 0; bi < BPB && b + bi < sb[dev].size; bi++){ */
+/*       m = 1 << (bi % 8); */
+/*       if((bp->data[bi/8] & m) == 0){  // Is block free? */
+/*         bp->data[bi/8] |= m;  // Mark block in use. */
+/*         log_write(bp); */
+/*         brelse(bp); */
+/*         bzero(dev, b + bi); */
+/*         return b + bi; */
+/*       } */
+/*     } */
+/*     brelse(bp); */
+/*   } */
+/*   panic("balloc: out of blocks"); */
+/* } */
 
 // Free a disk block.
-static void
-bfree(int dev, uint b)
-{
-  struct buf *bp;
-  int bi, m;
+/* static void */
+/* bfree(int dev, uint b) */
+/* { */
+/*   struct buf *bp; */
+/*   int bi, m; */
 
-  readsb(dev, &sb[dev]);
-  bp = bread(dev, BBLOCK(b, sb[dev]));
-  bi = b % BPB;
-  m = 1 << (bi % 8);
-  if((bp->data[bi/8] & m) == 0)
-    panic("freeing free block");
-  bp->data[bi/8] &= ~m;
-  log_write(bp);
-  brelse(bp);
-}
+/*   readsb(dev, &sb[dev]); */
+/*   bp = bread(dev, BBLOCK(b, sb[dev])); */
+/*   bi = b % BPB; */
+/*   m = 1 << (bi % 8); */
+/*   if((bp->data[bi/8] & m) == 0) */
+/*     panic("freeing free block"); */
+/*   bp->data[bi/8] &= ~m; */
+/*   log_write(bp); */
+/*   brelse(bp); */
+/* } */
 
 // Inodes.
 //
@@ -163,7 +163,7 @@ void
 iinit(int dev)
 {
   initlock(&icache.lock, "icache");
-  readsb(dev, &sb[dev]);
+  rootfs->fs_t->ops->readsb(dev, &sb[dev]);
   cprintf("sb: size %d nblocks %d ninodes %d nlog %d logstart %d inodestart %d bmap start %d\n", sb[dev].size,
           sb[dev].nblocks, sb[dev].ninodes, sb[dev].nlog, sb[dev].logstart, sb[dev].inodestart, sb[dev].bmapstart);
 }
@@ -258,6 +258,12 @@ iget(uint dev, uint inum)
   ip->inum = inum;
   ip->ref = 1;
   ip->flags = 0;
+
+  struct filesystem_type *fs_t = getvfsentry(IDEMAJOR, dev)->fs_t;
+
+  ip->fs_t = fs_t;
+  ip->iops = fs_t->iops;
+
   release(&icache.lock);
 
   return ip;
@@ -374,7 +380,7 @@ bmap(struct inode *ip, uint bn)
 
   if(bn < NDIRECT){
     if((addr = ip->addrs[bn]) == 0)
-      ip->addrs[bn] = addr = balloc(ip->dev);
+      ip->addrs[bn] = addr = ip->fs_t->ops->balloc(ip->dev);
     return addr;
   }
   bn -= NDIRECT;
@@ -382,11 +388,11 @@ bmap(struct inode *ip, uint bn)
   if(bn < NINDIRECT){
     // Load indirect block, allocating if necessary.
     if((addr = ip->addrs[NDIRECT]) == 0)
-      ip->addrs[NDIRECT] = addr = balloc(ip->dev);
+      ip->addrs[NDIRECT] = addr = ip->fs_t->ops->balloc(ip->dev);
     bp = bread(ip->dev, addr);
     a = (uint*)bp->data;
     if((addr = a[bn]) == 0){
-      a[bn] = addr = balloc(ip->dev);
+      a[bn] = addr = ip->fs_t->ops->balloc(ip->dev);
       log_write(bp);
     }
     brelse(bp);
@@ -410,7 +416,7 @@ itrunc(struct inode *ip)
 
   for(i = 0; i < NDIRECT; i++){
     if(ip->addrs[i]){
-      bfree(ip->dev, ip->addrs[i]);
+      ip->fs_t->ops->bfree(ip->dev, ip->addrs[i]);
       ip->addrs[i] = 0;
     }
   }
@@ -420,10 +426,10 @@ itrunc(struct inode *ip)
     a = (uint*)bp->data;
     for(j = 0; j < NINDIRECT; j++){
       if(a[j])
-        bfree(ip->dev, a[j]);
+        ip->fs_t->ops->bfree(ip->dev, a[j]);
     }
     brelse(bp);
-    bfree(ip->dev, ip->addrs[NDIRECT]);
+    ip->fs_t->ops->bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
   }
 

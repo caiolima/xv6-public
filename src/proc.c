@@ -6,6 +6,7 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include "vfs.h"
 
 struct {
   struct spinlock lock;
@@ -340,10 +341,7 @@ forkret(void)
     // be run from main().
     first = 0;
     iinit(ROOTDEV);
-    initlog(ROOTDEV);
-    int res = inits5fs();      // init s5 fs
-    if (res != 0)
-      panic("S5 not registered");
+    initlog(ROOTDEV); // TODO: Decouple this
   }
 
   // Return to "caller", actually trapret (see allocproc).

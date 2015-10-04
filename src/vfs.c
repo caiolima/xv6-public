@@ -39,6 +39,29 @@ allocvfs()
   return 0;
 }
 
+// Add rootvfs on the list
+void
+installrootfs(void)
+{
+  if ((rootfs = allocvfs()) == 0) {
+    panic("Failed on rootfs allocation");
+  }
+
+  rootfs->major = IDEMAJOR;
+  rootfs->minor = ROOTDEV;
+
+  struct filesystem_type *fst = getfs(ROOTFSTYPE);
+  if (fst == 0) {
+    panic("The root fs type is not supported");
+  }
+
+  rootfs->fs_t = fst;
+
+  acquire(&vfsmlist.lock);
+  list_add_tail(&(rootfs->fs_next), &(vfsmlist.fs_list));
+  release(&vfsmlist.lock);
+}
+
 void
 initvfsmlist(void)
 {

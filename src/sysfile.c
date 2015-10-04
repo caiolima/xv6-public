@@ -256,7 +256,7 @@ create(char *path, short type, short major, short minor)
     return 0;
   }
 
-  if((ip = ialloc(dp->dev, type)) == 0)
+  if((ip = dp->fs_t->ops->ialloc(dp->dev, type)) == 0)
     panic("create: ialloc");
 
   ilock(ip);
@@ -327,6 +327,12 @@ sys_mount(void)
     return -1;
   }
 
+  // Add this to a list to retrieve the Filesystem type to current device
+  if (putvfsonlist(devi->major, devi->minor, fs_t) == -1) {
+    iunlock(ip); iunlock(devi);
+    return -1;
+  }
+
   int mounted = fs_t->ops->mount(devi, ip);
 
   if (mounted != 0) {
@@ -335,12 +341,6 @@ sys_mount(void)
   }
 
   ip->type = T_MOUNT;
-
-  // Add this to a list to retrieve the Filesystem type to current minor device
-  if (putvfsonlist(devi->major, devi->minor, fs_t) == -1) {
-    iunlock(ip); iunlock(devi);
-    return -1;
-  }
 
   iunlock(ip); iunlock(devi);
 

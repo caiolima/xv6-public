@@ -29,7 +29,7 @@ struct inode {
   int ref;                      // Reference count
   int flags;                    // I_BUSY, I_VALID
   struct filesystem_type *fs_t; // The Filesystem type this inode is stored in
-  struct inode_operatins *iops; // The specific inode operations
+  struct inode_operations *iops; // The specific inode operations
 
   short type;                   // copy of disk inode
   short major;
@@ -42,16 +42,18 @@ struct inode {
 #define I_VALID 0x2
 
 struct vfs_operations {
-  int (*fs_init)(void);
-  int (*mount)(struct inode *, struct inode *);
-  int (*unmount)(struct inode *);
-  struct inode *(*getroot)(int, int);
-  int (*ialloc)(int dev, int type);
-  struct buf* (*balloc)(int dev);
-  void (*bfree)(int dev, uint b);
-  void (*brelse)(struct buf *b);
-  void (*bwrite)(struct buf *b);
-  struct buf* (*bread)(uint dev, uint blockno);
+  int           (*fs_init)(void);
+  int           (*mount)(struct inode *, struct inode *);
+  int           (*unmount)(struct inode *);
+  struct inode* (*getroot)(int, int);
+  void          (*readsb)(int dev, struct superblock *sb);
+  struct inode* (*ialloc)(uint dev, short type);
+  uint          (*balloc)(uint dev);
+  void          (*bzero)(int dev, int bno);
+  void          (*bfree)(int dev, uint b);
+  void          (*brelse)(struct buf *b);
+  void          (*bwrite)(struct buf *b);
+  struct buf*   (*bread)(uint dev, uint blockno);
 };
 
 /*
@@ -70,7 +72,7 @@ struct vfs {
 #define VFS_FREE 0
 #define VFS_USED 1
 
-struct vfs rootsfs; // It is the golbal pointer to root fs entry
+struct vfs *rootfs; // It is the golbal pointer to root fs entry
 
 /*
  * This is te representation of mounted lists.
@@ -83,11 +85,13 @@ struct {
 } vfsmlist;
 
 struct filesystem_type {
-  char *name;                 // The filesystem name. Its is used by the mount syscall
-  struct vfs_operations *ops; // VFS operations
-  struct list_head fs_list;   // This is a list of Filesystems used by vfssw
+  char *name;                     // The filesystem name. Its is used by the mount syscall
+  struct vfs_operations *ops;     // VFS operations
+  struct inode_operations *iops;  // Pointer to inode operations of this FS.
+  struct list_head fs_list;       // This is a list of Filesystems used by vfssw
 };
 
+void            installrootfs(void);
 void            initvfsmlist(void);
 struct vfs*     getvfsentry(int major, int minor);
 int             putvfsonlist(int major, int minor, struct filesystem_type *fs_t);

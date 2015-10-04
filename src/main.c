@@ -37,6 +37,9 @@ main(void)
   mountinit();     // mount table
   bdevtableinit(); // block device table
   ideinit();       // disk
+  if (inits5fs() != 0) // init s5 fs
+    panic("S5 not registered");
+  installrootfs();
   if(!ismp)
     timerinit();   // uniprocessor timer
   startothers();   // start other processors
@@ -50,7 +53,7 @@ main(void)
 static void
 mpenter(void)
 {
-  switchkvm(); 
+  switchkvm();
   seginit();
   lapicinit();
   mpmain();
