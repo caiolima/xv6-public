@@ -38,7 +38,7 @@ struct vfs_operations s5_ops = {
   .brelse  = &brelse,
   .bwrite  = &bwrite,
   .bread   = &bread,
-  .namecmp   = &s5_namecmp
+  .namecmp = &s5_namecmp
 };
 
 // Inode operations of s5 Filesystem
@@ -52,18 +52,22 @@ void           s5_stati(struct inode *ip, struct stat *st);
 int            s5_readi(struct inode *ip, char *dst, uint off, uint n);
 int            s5_writei(struct inode *ip, char *src, uint off, uint n);
 int            s5_dirlink(struct inode *dp, char *name, uint inum);
+int            s5_unlink(struct inode *dp, uint off);
+int            s5_isdirempty(struct inode *dp);
 
 struct inode_operations s5_iops = {
-  .dirlookup = &s5_dirlookup,
-  .iupdate   = &s5_iupdate,
-  .itrunc    = &s5_itrunc,
-  .bmap      = &s5_bmap,
-  .ilock     = &s5_ilock,
-  .iunlock   = &generic_iunlock,
-  .stati     = &generic_stati,
-  .readi     = &generic_readi,
-  .writei    = &s5_writei,
-  .dirlink   = &generic_dirlink
+  .dirlookup  = &s5_dirlookup,
+  .iupdate    = &s5_iupdate,
+  .itrunc     = &s5_itrunc,
+  .bmap       = &s5_bmap,
+  .ilock      = &s5_ilock,
+  .iunlock    = &generic_iunlock,
+  .stati      = &generic_stati,
+  .readi      = &generic_readi,
+  .writei     = &s5_writei,
+  .dirlink    = &generic_dirlink,
+  .unlink     = &s5_unlink,
+  .isdirempty = &s5_isdirempty
 };
 
 struct filesystem_type s5fs = {
@@ -388,5 +392,38 @@ s5_writei(struct inode *ip, char *src, uint off, uint n)
     s5_iops.iupdate(ip);
   }
   return n;
+}
+
+int
+s5_isdirempty(struct inode *dp)
+{
+  int off;
+  struct dirent de;
+
+  for(off=2*sizeof(de); off<dp->size; off+=sizeof(de)){
+    if(s5_iops.readi(dp, (char*)&de, off, sizeof(de)) != sizeof(de))
+      panic("isdirempty: readi");
+    if(de.inum != 0)
+      return 0;
+  }
+  return 1;
+}
+
+int
+s5_unlink(struct inode *dp, uint off)
+{
+  struct dirent de;
+
+  memset(&de, 0, sizeof(de));
+  if(dp->iops->writei(dp, (char*)&de, off, sizeof(de)) != sizeof(de))
+    return -1;
+
+  return 0;
+}
+
+int
+s5_namecmp(const char *s, const char *t)
+{
+  return strncmp(s, t, DIRSIZ);
 }
 

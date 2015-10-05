@@ -230,14 +230,14 @@ consoleread(struct inode *ip, char *dst, int n)
   uint target;
   int c;
 
-  iunlock(ip);
+  ip->iops->iunlock(ip);
   target = n;
   acquire(&input.lock);
   while(n > 0){
     while(input.r == input.w){
       if(proc->killed){
         release(&input.lock);
-        ilock(ip);
+        ip->iops->ilock(ip);
         return -1;
       }
       sleep(&input.r, &input.lock);
@@ -257,7 +257,7 @@ consoleread(struct inode *ip, char *dst, int n)
       break;
   }
   release(&input.lock);
-  ilock(ip);
+  ip->iops->ilock(ip);
 
   return target - n;
 }
@@ -267,12 +267,12 @@ consolewrite(struct inode *ip, char *buf, int n)
 {
   int i;
 
-  iunlock(ip);
+  ip->iops->iunlock(ip);
   acquire(&cons.lock);
   for(i = 0; i < n; i++)
     consputc(buf[i] & 0xff);
   release(&cons.lock);
-  ilock(ip);
+  ip->iops->ilock(ip);
 
   return n;
 }

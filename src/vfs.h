@@ -3,6 +3,7 @@
 #include "types.h"
 #include "param.h"
 #include "list.h"
+#include "spinlock.h"
 #include "fs.h"
 
 #ifndef XV6_VFS_H_
@@ -21,6 +22,8 @@ struct inode_operations {
   int (*readi)(struct inode *ip, char *dst, uint off, uint n);
   int (*writei)(struct inode *ip, char *src, uint off, uint n);
   int (*dirlink)(struct inode *dp, char *name, uint inum);
+  int (*unlink)(struct inode *dp, uint off);
+  int (*isdirempty)(struct inode *dp);
 };
 
 // in-memory copy of an inode
