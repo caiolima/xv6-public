@@ -8,7 +8,12 @@
 #include "defs.h"
 #include "spinlock.h"
 #include "list.h"
+#include "stat.h"
+#include "file.h"
+#include "buf.h"
 #include "vfs.h"
+
+#define min(a, b) ((a) < (b) ? (a) : (b))
 
 /*
  * Its is a pool to allocate vfs structs.
@@ -140,3 +145,79 @@ getfs(const char *fs_name)
   return 0;
 }
 
+void
+generic_iunlock(struct inode *ip)
+{
+  if(ip == 0 || !(ip->flags & I_BUSY) || ip->ref < 1)
+    panic("iunlock");
+
+  acquire(&icache.lock);
+  ip->flags &= ~I_BUSY;
+  wakeup(ip);
+  release(&icache.lock);
+}
+
+void
+generic_stati(struct inode *ip, struct stat *st)
+{
+  st->dev = ip->dev;
+  st->ino = ip->inum;
+  st->type = ip->type;
+  st->nlink = ip->nlink;
+  st->size = ip->size;
+}
+
+int
+generic_readi(struct inode *ip, char *dst, uint off, uint n)
+{
+  uint tot, m;
+  struct buf *bp;
+
+  if(ip->type == T_DEV){
+    if(ip->major < 0 || ip->major >= NDEV || !devsw[ip->major].read)
+      return -1;
+    return devsw[ip->major].read(ip, dst, n);
+  }
+
+  if(off > ip->size || off + n < off)
+    return -1;
+  if(off + n > ip->size)
+    n = ip->size - off;
+
+  for(tot=0; tot<n; tot+=m, off+=m, dst+=m){
+    bp = ip->fs_t->ops->bread(ip->dev, ip->iops->bmap(ip, off/BSIZE));
+    m = min(n - tot, BSIZE - off%BSIZE);
+    memmove(dst, bp->data + off%BSIZE, m);
+    ip->fs_t->ops->brelse(bp);
+  }
+  return n;
+}
+
+int
+generic_dirlink(struct inode *dp, char *name, uint inum)
+{
+  int off;
+  struct dirent de;
+  struct inode *ip;
+
+  // Check that name is not present.
+  if((ip = dp->iops->dirlookup(dp, name, 0)) != 0){
+    iput(ip);
+    return -1;
+  }
+
+  // Look for an empty dirent.
+  for(off = 0; off < dp->size; off += sizeof(de)){
+    if(dp->iops->readi(dp, (char*)&de, off, sizeof(de)) != sizeof(de))
+      panic("dirlink read");
+    if(de.inum == 0)
+      break;
+  }
+
+  strncpy(de.name, name, DIRSIZ);
+  de.inum = inum;
+  if(dp->iops->writei(dp, (char*)&de, off, sizeof(de)) != sizeof(de))
+    panic("dirlink");
+
+  return 0;
+}

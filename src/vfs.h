@@ -8,8 +8,10 @@
 #ifndef XV6_VFS_H_
 #define XV6_VFS_H_
 
+#define min(a, b) ((a) < (b) ? (a) : (b))
+
 struct inode_operations {
-  struct inode* (*dirlookup)(struct inode *dp, char *name, int *off);
+  struct inode* (*dirlookup)(struct inode *dp, char *name, uint *off);
   void (*iupdate)(struct inode *ip);
   void (*itrunc)(struct inode *ip);
   uint (*bmap)(struct inode *ip, uint bn);
@@ -18,7 +20,6 @@ struct inode_operations {
   void (*stati)(struct inode *ip, struct stat *st);
   int (*readi)(struct inode *ip, char *dst, uint off, uint n);
   int (*writei)(struct inode *ip, char *src, uint off, uint n);
-  int (*namecmp)(const char *s, const char *t);
   int (*dirlink)(struct inode *dp, char *name, uint inum);
 };
 
@@ -41,6 +42,11 @@ struct inode {
 #define I_BUSY 0x1
 #define I_VALID 0x2
 
+struct {
+  struct spinlock lock;
+  struct inode inode[NINODE];
+} icache;
+
 struct vfs_operations {
   int           (*fs_init)(void);
   int           (*mount)(struct inode *, struct inode *);
@@ -54,6 +60,7 @@ struct vfs_operations {
   void          (*brelse)(struct buf *b);
   void          (*bwrite)(struct buf *b);
   struct buf*   (*bread)(uint dev, uint blockno);
+  int           (*namecmp)(const char *s, const char *t);
 };
 
 /*
@@ -98,6 +105,12 @@ int             putvfsonlist(int major, int minor, struct filesystem_type *fs_t)
 void            initvfssw(void);
 int             register_fs(struct filesystem_type *fs);
 struct filesystem_type* getfs(const char *fs_name);
+
+// Generic inode operations
+void generic_iunlock(struct inode*);
+void generic_stati(struct inode *ip, struct stat *st);
+int  generic_readi(struct inode *ip, char *dst, uint off, uint n);
+int  generic_dirlink(struct inode *dp, char *name, uint inum);
 
 #endif /* XV6_VFS_H_ */
 

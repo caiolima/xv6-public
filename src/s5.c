@@ -23,33 +23,7 @@ struct inode*  s5_ialloc(uint dev, short type);
 uint           s5_balloc(uint dev);
 void           s5_bzero(int dev, int bno);
 void           s5_bfree(int dev, uint b);
-
-// Inode operations of s5 Filesystem
-/* struct inode*  s5_dirlookup(struct inode *dp, char *name, int *off); */
-/* void           s5_iupdate(struct inode *ip); */
-/* void           s5_itrunc(struct inode *ip); */
-/* uint           s5_bmap(struct inode *ip, uint bn); */
-/* void           s5_ilock(struct inode* ip); */
-/* void           s5_iunlock(struct inode* ip); */
-/* void           s5_stati(struct inode *ip, struct stat *st); */
-/* int            s5_readi(struct inode *ip, char *dst, uint off, uint n); */
-/* int            s5_writei(struct inode *ip, char *src, uint off, uint n); */
-/* int            s5_namecmp(const char *s, const char *t); */
-/* int            s5_dirlink(struct inode *dp, char *name, uint inum); */
-
-struct inode_operations s5_iops = {
-  /* .dirlookup = &s5_dirlookup, */
-  /* .iupdate   = &s5_iupdate, */
-  /* .itrunc    = &s5_itrunc, */
-  /* .bmap      = &s5_bmap, */
-  /* .ilock     = &s5_ilock, */
-  /* .iunlock   = &s5_iunlock, */
-  /* .stati     = &s5_stati, */
-  /* .readi     = &s5_readi, */
-  /* .writei    = &s5_writei, */
-  /* .namecmp   = &s5_namecmp, */
-  /* .dirlink   = &s5_dirlink */
-};
+int            s5_namecmp(const char *s, const char *t);
 
 struct vfs_operations s5_ops = {
   .fs_init = &s5fs_init,
@@ -63,7 +37,33 @@ struct vfs_operations s5_ops = {
   .bfree   = &s5_bfree,
   .brelse  = &brelse,
   .bwrite  = &bwrite,
-  .bread   = &bread
+  .bread   = &bread,
+  .namecmp   = &s5_namecmp
+};
+
+// Inode operations of s5 Filesystem
+struct inode*  s5_dirlookup(struct inode *dp, char *name, uint *off);
+void           s5_iupdate(struct inode *ip);
+void           s5_itrunc(struct inode *ip);
+uint           s5_bmap(struct inode *ip, uint bn);
+void           s5_ilock(struct inode* ip);
+void           s5_iunlock(struct inode* ip);
+void           s5_stati(struct inode *ip, struct stat *st);
+int            s5_readi(struct inode *ip, char *dst, uint off, uint n);
+int            s5_writei(struct inode *ip, char *src, uint off, uint n);
+int            s5_dirlink(struct inode *dp, char *name, uint inum);
+
+struct inode_operations s5_iops = {
+  .dirlookup = &s5_dirlookup,
+  .iupdate   = &s5_iupdate,
+  .itrunc    = &s5_itrunc,
+  .bmap      = &s5_bmap,
+  .ilock     = &s5_ilock,
+  .iunlock   = &generic_iunlock,
+  .stati     = &generic_stati,
+  .readi     = &generic_readi,
+  .writei    = &s5_writei,
+  .dirlink   = &generic_dirlink
 };
 
 struct filesystem_type s5fs = {
@@ -221,5 +221,172 @@ s5_bfree(int dev, uint b)
   bp->data[bi/8] &= ~m;
   log_write(bp);
   s5_ops.brelse(bp);
+}
+
+struct inode*
+s5_dirlookup(struct inode *dp, char *name, uint *poff)
+{
+  uint off, inum;
+  struct dirent de;
+
+  if(dp->type == T_FILE || dp->type == T_DEV)
+    panic("dirlookup not DIR");
+
+  for(off = 0; off < dp->size; off += sizeof(de)){
+    if(s5_iops.readi(dp, (char*)&de, off, sizeof(de)) != sizeof(de))
+      panic("dirlink read");
+    if(de.inum == 0)
+      continue;
+    if(s5_ops.namecmp(name, de.name) == 0){
+      // entry matches path element
+      if(poff)
+        *poff = off;
+      inum = de.inum;
+      return iget(dp->dev, inum);
+    }
+  }
+
+  return 0;
+}
+
+void
+s5_iupdate(struct inode *ip)
+{
+  struct buf *bp;
+  struct dinode *dip;
+
+  bp = s5_ops.bread(ip->dev, IBLOCK(ip->inum, sb[ip->dev]));
+  dip = (struct dinode*)bp->data + ip->inum%IPB;
+  dip->type = ip->type;
+  dip->major = ip->major;
+  dip->minor = ip->minor;
+  dip->nlink = ip->nlink;
+  dip->size = ip->size;
+  memmove(dip->addrs, ip->addrs, sizeof(ip->addrs));
+  log_write(bp);
+  s5_ops.brelse(bp);
+}
+
+void
+s5_itrunc(struct inode *ip)
+{
+  int i, j;
+  struct buf *bp;
+  uint *a;
+
+  for(i = 0; i < NDIRECT; i++){
+    if(ip->addrs[i]){
+      s5_ops.bfree(ip->dev, ip->addrs[i]);
+      ip->addrs[i] = 0;
+    }
+  }
+
+  if(ip->addrs[NDIRECT]){
+    bp = s5_ops.bread(ip->dev, ip->addrs[NDIRECT]);
+    a = (uint*)bp->data;
+    for(j = 0; j < NINDIRECT; j++){
+      if(a[j])
+        s5_ops.bfree(ip->dev, a[j]);
+    }
+    s5_ops.brelse(bp);
+    s5_ops.bfree(ip->dev, ip->addrs[NDIRECT]);
+    ip->addrs[NDIRECT] = 0;
+  }
+
+  ip->size = 0;
+  s5_iops.iupdate(ip);
+}
+
+uint
+s5_bmap(struct inode *ip, uint bn)
+{
+  uint addr, *a;
+  struct buf *bp;
+
+  if(bn < NDIRECT){
+    if((addr = ip->addrs[bn]) == 0)
+      ip->addrs[bn] = addr = s5_ops.balloc(ip->dev);
+    return addr;
+  }
+  bn -= NDIRECT;
+
+  if(bn < NINDIRECT){
+    // Load indirect block, allocating if necessary.
+    if((addr = ip->addrs[NDIRECT]) == 0)
+      ip->addrs[NDIRECT] = addr = s5_ops.balloc(ip->dev);
+    bp = s5_ops.bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    if((addr = a[bn]) == 0){
+      a[bn] = addr = s5_ops.balloc(ip->dev);
+      log_write(bp);
+    }
+    s5_ops.brelse(bp);
+    return addr;
+  }
+
+  panic("bmap: out of range");
+}
+
+void
+s5_ilock(struct inode *ip)
+{
+  struct buf *bp;
+  struct dinode *dip;
+
+  if(ip == 0 || ip->ref < 1)
+    panic("ilock");
+
+  acquire(&icache.lock);
+  while (ip->flags & I_BUSY)
+    sleep(ip, &icache.lock);
+  ip->flags |= I_BUSY;
+  release(&icache.lock);
+
+  if (!(ip->flags & I_VALID)) {
+    bp = s5_ops.bread(ip->dev, IBLOCK(ip->inum, sb[ip->dev]));
+    dip = (struct dinode*)bp->data + ip->inum%IPB;
+    ip->type = dip->type;
+    ip->major = dip->major;
+    ip->minor = dip->minor;
+    ip->nlink = dip->nlink;
+    ip->size = dip->size;
+    memmove(ip->addrs, dip->addrs, sizeof(ip->addrs));
+    s5_ops.brelse(bp);
+    ip->flags |= I_VALID;
+    if (ip->type == 0)
+      panic("ilock: no type");
+  }
+}
+
+int
+s5_writei(struct inode *ip, char *src, uint off, uint n)
+{
+  uint tot, m;
+  struct buf *bp;
+
+  if(ip->type == T_DEV){
+    if(ip->major < 0 || ip->major >= NDEV || !devsw[ip->major].write)
+      return -1;
+    return devsw[ip->major].write(ip, src, n);
+  }
+
+  if(off > ip->size || off + n < off)
+    return -1;
+  if(off + n > MAXFILE*BSIZE)
+    return -1;
+
+  for(tot=0; tot<n; tot+=m, off+=m, src+=m){
+    bp = s5_ops.bread(ip->dev, s5_iops.bmap(ip, off/BSIZE));
+    m = min(n - tot, BSIZE - off%BSIZE);
+    memmove(bp->data + off%BSIZE, src, m);
+    log_write(bp);
+    s5_ops.brelse(bp);
+  }
+
+  if(n > 0 && off > ip->size){
+    ip->size = off;
+    s5_iops.iupdate(ip);
+  }
+  return n;
 }
 

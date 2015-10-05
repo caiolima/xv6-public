@@ -21,7 +21,6 @@
 #include "file.h"
 #include "vfsmount.h"
 
-#define min(a, b) ((a) < (b) ? (a) : (b))
 static void itrunc(struct inode*);
 
 // Read the super block.
@@ -153,11 +152,6 @@ readsb(int dev, struct superblock *sb)
 // Many internal file system functions expect the caller to
 // have locked the inodes involved; this lets callers create
 // multi-step atomic operations.
-
-struct {
-  struct spinlock lock;
-  struct inode inode[NINODE];
-} icache;
 
 void
 iinit(int dev)
@@ -343,9 +337,9 @@ iput(struct inode *ip)
       panic("iput busy");
     ip->flags |= I_BUSY;
     release(&icache.lock);
-    itrunc(ip);
+    ip->iops->itrunc(ip);
     ip->type = 0;
-    iupdate(ip);
+    ip->iops->iupdate(ip);
     acquire(&icache.lock);
     ip->flags = 0;
     wakeup(ip);
