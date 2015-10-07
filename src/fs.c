@@ -21,8 +21,7 @@
 #include "file.h"
 #include "vfsmount.h"
 
-#define min(a, b) ((a) < (b) ? (a) : (b))
-static void itrunc(struct inode*);
+/* static void itrunc(struct inode*); */
 
 // Read the super block.
 void
@@ -36,61 +35,61 @@ readsb(int dev, struct superblock *sb)
 }
 
 // Zero a block.
-static void
-bzero(int dev, int bno)
-{
-  struct buf *bp;
+/* static void */
+/* bzero(int dev, int bno) */
+/* { */
+/*   struct buf *bp; */
 
-  bp = bread(dev, bno);
-  memset(bp->data, 0, BSIZE);
-  log_write(bp);
-  brelse(bp);
-}
+/*   bp = bread(dev, bno); */
+/*   memset(bp->data, 0, BSIZE); */
+/*   log_write(bp); */
+/*   brelse(bp); */
+/* } */
 
 // Blocks.
 
 // Allocate a zeroed disk block.
-static uint
-balloc(uint dev)
-{
-  int b, bi, m;
-  struct buf *bp;
+/* static uint */
+/* balloc(uint dev) */
+/* { */
+/*   int b, bi, m; */
+/*   struct buf *bp; */
 
-  bp = 0;
-  for(b = 0; b < sb[dev].size; b += BPB){
-    bp = bread(dev, BBLOCK(b, sb[dev]));
-    for(bi = 0; bi < BPB && b + bi < sb[dev].size; bi++){
-      m = 1 << (bi % 8);
-      if((bp->data[bi/8] & m) == 0){  // Is block free?
-        bp->data[bi/8] |= m;  // Mark block in use.
-        log_write(bp);
-        brelse(bp);
-        bzero(dev, b + bi);
-        return b + bi;
-      }
-    }
-    brelse(bp);
-  }
-  panic("balloc: out of blocks");
-}
+/*   bp = 0; */
+/*   for(b = 0; b < sb[dev].size; b += BPB){ */
+/*     bp = bread(dev, BBLOCK(b, sb[dev])); */
+/*     for(bi = 0; bi < BPB && b + bi < sb[dev].size; bi++){ */
+/*       m = 1 << (bi % 8); */
+/*       if((bp->data[bi/8] & m) == 0){  // Is block free? */
+/*         bp->data[bi/8] |= m;  // Mark block in use. */
+/*         log_write(bp); */
+/*         brelse(bp); */
+/*         bzero(dev, b + bi); */
+/*         return b + bi; */
+/*       } */
+/*     } */
+/*     brelse(bp); */
+/*   } */
+/*   panic("balloc: out of blocks"); */
+/* } */
 
 // Free a disk block.
-static void
-bfree(int dev, uint b)
-{
-  struct buf *bp;
-  int bi, m;
+/* static void */
+/* bfree(int dev, uint b) */
+/* { */
+/*   struct buf *bp; */
+/*   int bi, m; */
 
-  readsb(dev, &sb[dev]);
-  bp = bread(dev, BBLOCK(b, sb[dev]));
-  bi = b % BPB;
-  m = 1 << (bi % 8);
-  if((bp->data[bi/8] & m) == 0)
-    panic("freeing free block");
-  bp->data[bi/8] &= ~m;
-  log_write(bp);
-  brelse(bp);
-}
+/*   readsb(dev, &sb[dev]); */
+/*   bp = bread(dev, BBLOCK(b, sb[dev])); */
+/*   bi = b % BPB; */
+/*   m = 1 << (bi % 8); */
+/*   if((bp->data[bi/8] & m) == 0) */
+/*     panic("freeing free block"); */
+/*   bp->data[bi/8] &= ~m; */
+/*   log_write(bp); */
+/*   brelse(bp); */
+/* } */
 
 // Inodes.
 //
@@ -154,16 +153,11 @@ bfree(int dev, uint b)
 // have locked the inodes involved; this lets callers create
 // multi-step atomic operations.
 
-struct {
-  struct spinlock lock;
-  struct inode inode[NINODE];
-} icache;
-
 void
 iinit(int dev)
 {
   initlock(&icache.lock, "icache");
-  readsb(dev, &sb[dev]);
+  rootfs->fs_t->ops->readsb(dev, &sb[dev]);
   cprintf("sb: size %d nblocks %d ninodes %d nlog %d logstart %d inodestart %d bmap start %d\n", sb[dev].size,
           sb[dev].nblocks, sb[dev].ninodes, sb[dev].nlog, sb[dev].logstart, sb[dev].inodestart, sb[dev].bmapstart);
 }
@@ -258,6 +252,12 @@ iget(uint dev, uint inum)
   ip->inum = inum;
   ip->ref = 1;
   ip->flags = 0;
+
+  struct filesystem_type *fs_t = getvfsentry(IDEMAJOR, dev)->fs_t;
+
+  ip->fs_t = fs_t;
+  ip->iops = fs_t->iops;
+
   release(&icache.lock);
 
   return ip;
@@ -337,9 +337,9 @@ iput(struct inode *ip)
       panic("iput busy");
     ip->flags |= I_BUSY;
     release(&icache.lock);
-    itrunc(ip);
+    ip->iops->itrunc(ip);
     ip->type = 0;
-    iupdate(ip);
+    ip->iops->iupdate(ip);
     acquire(&icache.lock);
     ip->flags = 0;
     wakeup(ip);
@@ -352,7 +352,7 @@ iput(struct inode *ip)
 void
 iunlockput(struct inode *ip)
 {
-  iunlock(ip);
+  ip->iops->iunlock(ip);
   iput(ip);
 }
 
@@ -361,77 +361,77 @@ iunlockput(struct inode *ip)
 //
 // The content (data) associated with each inode is stored
 // in blocks on the disk. The first NDIRECT block numbers
-// are listed in ip->addrs[].  The next NINDIRECT blocks are 
+// are listed in ip->addrs[].  The next NINDIRECT blocks are
 // listed in block ip->addrs[NDIRECT].
 
 // Return the disk block address of the nth block in inode ip.
 // If there is no such block, bmap allocates one.
-static uint
-bmap(struct inode *ip, uint bn)
-{
-  uint addr, *a;
-  struct buf *bp;
+/* static uint */
+/* bmap(struct inode *ip, uint bn) */
+/* { */
+/*   uint addr, *a; */
+/*   struct buf *bp; */
 
-  if(bn < NDIRECT){
-    if((addr = ip->addrs[bn]) == 0)
-      ip->addrs[bn] = addr = balloc(ip->dev);
-    return addr;
-  }
-  bn -= NDIRECT;
+/*   if(bn < NDIRECT){ */
+/*     if((addr = ip->addrs[bn]) == 0) */
+/*       ip->addrs[bn] = addr = ip->fs_t->ops->balloc(ip->dev); */
+/*     return addr; */
+/*   } */
+/*   bn -= NDIRECT; */
 
-  if(bn < NINDIRECT){
-    // Load indirect block, allocating if necessary.
-    if((addr = ip->addrs[NDIRECT]) == 0)
-      ip->addrs[NDIRECT] = addr = balloc(ip->dev);
-    bp = bread(ip->dev, addr);
-    a = (uint*)bp->data;
-    if((addr = a[bn]) == 0){
-      a[bn] = addr = balloc(ip->dev);
-      log_write(bp);
-    }
-    brelse(bp);
-    return addr;
-  }
+/*   if(bn < NINDIRECT){ */
+/*     // Load indirect block, allocating if necessary. */
+/*     if((addr = ip->addrs[NDIRECT]) == 0) */
+/*       ip->addrs[NDIRECT] = addr = ip->fs_t->ops->balloc(ip->dev); */
+/*     bp = bread(ip->dev, addr); */
+/*     a = (uint*)bp->data; */
+/*     if((addr = a[bn]) == 0){ */
+/*       a[bn] = addr = ip->fs_t->ops->balloc(ip->dev); */
+/*       log_write(bp); */
+/*     } */
+/*     brelse(bp); */
+/*     return addr; */
+/*   } */
 
-  panic("bmap: out of range");
-}
+/*   panic("bmap: out of range"); */
+/* } */
 
 // Truncate inode (discard contents).
 // Only called when the inode has no links
 // to it (no directory entries referring to it)
 // and has no in-memory reference to it (is
 // not an open file or current directory).
-static void
-itrunc(struct inode *ip)
-{
-  int i, j;
-  struct buf *bp;
-  uint *a;
+/* static void */
+/* itrunc(struct inode *ip) */
+/* { */
+/*   int i, j; */
+/*   struct buf *bp; */
+/*   uint *a; */
 
-  for(i = 0; i < NDIRECT; i++){
-    if(ip->addrs[i]){
-      bfree(ip->dev, ip->addrs[i]);
-      ip->addrs[i] = 0;
-    }
-  }
-  
-  if(ip->addrs[NDIRECT]){
-    bp = bread(ip->dev, ip->addrs[NDIRECT]);
-    a = (uint*)bp->data;
-    for(j = 0; j < NINDIRECT; j++){
-      if(a[j])
-        bfree(ip->dev, a[j]);
-    }
-    brelse(bp);
-    bfree(ip->dev, ip->addrs[NDIRECT]);
-    ip->addrs[NDIRECT] = 0;
-  }
+/*   for(i = 0; i < NDIRECT; i++){ */
+/*     if(ip->addrs[i]){ */
+/*       ip->fs_t->ops->bfree(ip->dev, ip->addrs[i]); */
+/*       ip->addrs[i] = 0; */
+/*     } */
+/*   } */
 
-  ip->size = 0;
-  iupdate(ip);
-}
+/*   if(ip->addrs[NDIRECT]){ */
+/*     bp = bread(ip->dev, ip->addrs[NDIRECT]); */
+/*     a = (uint*)bp->data; */
+/*     for(j = 0; j < NINDIRECT; j++){ */
+/*       if(a[j]) */
+/*         ip->fs_t->ops->bfree(ip->dev, a[j]); */
+/*     } */
+/*     brelse(bp); */
+/*     ip->fs_t->ops->bfree(ip->dev, ip->addrs[NDIRECT]); */
+/*     ip->addrs[NDIRECT] = 0; */
+/*   } */
 
-// Copy stat information from inode.
+/*   ip->size = 0; */
+/*   iupdate(ip); */
+/* } */
+
+// copy stat information from inode.
 void
 stati(struct inode *ip, struct stat *st)
 {
@@ -444,65 +444,65 @@ stati(struct inode *ip, struct stat *st)
 
 //PAGEBREAK!
 // Read data from inode.
-int
-readi(struct inode *ip, char *dst, uint off, uint n)
-{
-  uint tot, m;
-  struct buf *bp;
+/* int */
+/* readi(struct inode *ip, char *dst, uint off, uint n) */
+/* { */
+/*   uint tot, m; */
+/*   struct buf *bp; */
 
-  if(ip->type == T_DEV){
-    if(ip->major < 0 || ip->major >= NDEV || !devsw[ip->major].read)
-      return -1;
-    return devsw[ip->major].read(ip, dst, n);
-  }
+/*   if(ip->type == T_DEV){ */
+/*     if(ip->major < 0 || ip->major >= NDEV || !devsw[ip->major].read) */
+/*       return -1; */
+/*     return devsw[ip->major].read(ip, dst, n); */
+/*   } */
 
-  if(off > ip->size || off + n < off)
-    return -1;
-  if(off + n > ip->size)
-    n = ip->size - off;
+/*   if(off > ip->size || off + n < off) */
+/*     return -1; */
+/*   if(off + n > ip->size) */
+/*     n = ip->size - off; */
 
-  for(tot=0; tot<n; tot+=m, off+=m, dst+=m){
-    bp = bread(ip->dev, bmap(ip, off/BSIZE));
-    m = min(n - tot, BSIZE - off%BSIZE);
-    memmove(dst, bp->data + off%BSIZE, m);
-    brelse(bp);
-  }
-  return n;
-}
+/*   for(tot=0; tot<n; tot+=m, off+=m, dst+=m){ */
+/*     bp = bread(ip->dev, bmap(ip, off/BSIZE)); */
+/*     m = min(n - tot, BSIZE - off%BSIZE); */
+/*     memmove(dst, bp->data + off%BSIZE, m); */
+/*     brelse(bp); */
+/*   } */
+/*   return n; */
+/* } */
 
 // PAGEBREAK!
 // Write data to inode.
-int
-writei(struct inode *ip, char *src, uint off, uint n)
-{
-  uint tot, m;
-  struct buf *bp;
+/* int */
+/* writei(struct inode *ip, char *src, uint off, uint n) */
+/* { */
+/*   uint tot, m; */
+/*   struct buf *bp; */
 
-  if(ip->type == T_DEV){
-    if(ip->major < 0 || ip->major >= NDEV || !devsw[ip->major].write)
-      return -1;
-    return devsw[ip->major].write(ip, src, n);
-  }
+/*   if(ip->type == T_DEV){ */
+/*     if(ip->major < 0 || ip->major >= NDEV || !devsw[ip->major].write) */
+/*       return -1; */
+/*     return devsw[ip->major].write(ip, src, n); */
+/*   } */
 
-  if(off > ip->size || off + n < off)
-    return -1;
-  if(off + n > MAXFILE*BSIZE)
-    return -1;
+/*   if(off > ip->size || off + n < off) */
+/*     return -1; */
+/*   if(off + n > MAXFILE*BSIZE) */
+/*     return -1; */
 
-  for(tot=0; tot<n; tot+=m, off+=m, src+=m){
-    bp = bread(ip->dev, bmap(ip, off/BSIZE));
-    m = min(n - tot, BSIZE - off%BSIZE);
-    memmove(bp->data + off%BSIZE, src, m);
-    log_write(bp);
-    brelse(bp);
-  }
+/*   for(tot=0; tot<n; tot+=m, off+=m, src+=m){ */
+/*     bp = bread(ip->dev, bmap(ip, off/BSIZE)); */
+/*     m = min(n - tot, BSIZE - off%BSIZE); */
+/*     memmove(bp->data + off%BSIZE, src, m); */
+/*     log_write(bp); */
+/*     brelse(bp); */
+/*   } */
 
-  if(n > 0 && off > ip->size){
-    ip->size = off;
-    iupdate(ip);
-  }
-  return n;
-}
+/*   if(n > 0 && off > ip->size){ */
+/*     ip->size = off; */
+/*     iupdate(ip); */
+/*   } */
+/*   return n; */
+/* } */
 
 //PAGEBREAK!
 // Directories
@@ -515,61 +515,61 @@ namecmp(const char *s, const char *t)
 
 // Look for a directory entry in a directory.
 // If found, set *poff to byte offset of entry.
-struct inode*
-dirlookup(struct inode *dp, char *name, uint *poff)
-{
-  uint off, inum;
-  struct dirent de;
+/* struct inode* */
+/* dirlookup(struct inode *dp, char *name, uint *poff) */
+/* { */
+/*   uint off, inum; */
+/*   struct dirent de; */
 
-  if(dp->type == T_FILE || dp->type == T_DEV)
-    panic("dirlookup not DIR");
+/*   if(dp->type == T_FILE || dp->type == T_DEV) */
+/*     panic("dirlookup not DIR"); */
 
-  for(off = 0; off < dp->size; off += sizeof(de)){
-    if(readi(dp, (char*)&de, off, sizeof(de)) != sizeof(de))
-      panic("dirlink read");
-    if(de.inum == 0)
-      continue;
-    if(namecmp(name, de.name) == 0){
-      // entry matches path element
-      if(poff)
-        *poff = off;
-      inum = de.inum;
-      return iget(dp->dev, inum);
-    }
-  }
+/*   for(off = 0; off < dp->size; off += sizeof(de)){ */
+/*     if(readi(dp, (char*)&de, off, sizeof(de)) != sizeof(de)) */
+/*       panic("dirlink read"); */
+/*     if(de.inum == 0) */
+/*       continue; */
+/*     if(namecmp(name, de.name) == 0){ */
+/*       // entry matches path element */
+/*       if(poff) */
+/*         *poff = off; */
+/*       inum = de.inum; */
+/*       return iget(dp->dev, inum); */
+/*     } */
+/*   } */
 
-  return 0;
-}
+/*   return 0; */
+/* } */
 
 // Write a new directory entry (name, inum) into the directory dp.
-int
-dirlink(struct inode *dp, char *name, uint inum)
-{
-  int off;
-  struct dirent de;
-  struct inode *ip;
+/* int */
+/* dirlink(struct inode *dp, char *name, uint inum) */
+/* { */
+/*   int off; */
+/*   struct dirent de; */
+/*   struct inode *ip; */
 
-  // Check that name is not present.
-  if((ip = dirlookup(dp, name, 0)) != 0){
-    iput(ip);
-    return -1;
-  }
+/*   // Check that name is not present. */
+/*   if((ip = dirlookup(dp, name, 0)) != 0){ */
+/*     iput(ip); */
+/*     return -1; */
+/*   } */
 
-  // Look for an empty dirent.
-  for(off = 0; off < dp->size; off += sizeof(de)){
-    if(readi(dp, (char*)&de, off, sizeof(de)) != sizeof(de))
-      panic("dirlink read");
-    if(de.inum == 0)
-      break;
-  }
+/*   // Look for an empty dirent. */
+/*   for(off = 0; off < dp->size; off += sizeof(de)){ */
+/*     if(readi(dp, (char*)&de, off, sizeof(de)) != sizeof(de)) */
+/*       panic("dirlink read"); */
+/*     if(de.inum == 0) */
+/*       break; */
+/*   } */
 
-  strncpy(de.name, name, DIRSIZ);
-  de.inum = inum;
-  if(writei(dp, (char*)&de, off, sizeof(de)) != sizeof(de))
-    panic("dirlink");
-  
-  return 0;
-}
+/*   strncpy(de.name, name, DIRSIZ); */
+/*   de.inum = inum; */
+/*   if(writei(dp, (char*)&de, off, sizeof(de)) != sizeof(de)) */
+/*     panic("dirlink"); */
+
+/*   return 0; */
+/* } */
 
 //PAGEBREAK!
 // Paths
@@ -621,24 +621,24 @@ namex(char *path, int nameiparent, char *name)
   struct inode *ip, *next;
 
   if(*path == '/')
-    ip = iget(ROOTDEV, ROOTINO);
+    ip = rootfs->fs_t->ops->getroot(IDEMAJOR, ROOTDEV);
   else
     ip = idup(proc->cwd);
 
   while((path = skipelem(path, name)) != 0){
-    ilock(ip);
+    ip->iops->ilock(ip);
     if(ip->type != T_DIR){
       iunlockput(ip);
       return 0;
     }
     if(nameiparent && *path == '\0'){
       // Stop one level early.
-      iunlock(ip);
+      ip->iops->iunlock(ip);
       return ip;
     }
 
     component_search:
-    if((next = dirlookup(ip, name, 0)) == 0){
+    if((next = ip->iops->dirlookup(ip, name, 0)) == 0){
       iunlockput(ip);
       return 0;
     }
@@ -647,7 +647,7 @@ namex(char *path, int nameiparent, char *name)
       struct inode *mntinode = mtablemntinode(ip);
       iunlockput(ip);
       ip = mntinode;
-      ilock(ip);
+      ip->iops->ilock(ip);
       ip->ref++;
       goto component_search;
     }

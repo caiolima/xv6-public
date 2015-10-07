@@ -191,11 +191,6 @@ int             registerbdev(struct bdev);
 int             unregisterbdev(struct bdev);
 int             bdev_open(struct inode *);
 
-// vfs.c
-void            initvfssw(void);
-int             register_fs(struct filesystem_type *fs);
-struct filesystem_type* getfs(const char *fs_name);
-
 // s5.c
 int             inits5fs(void);
 
