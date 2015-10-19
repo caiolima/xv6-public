@@ -3,13 +3,33 @@
 #include "types.h"
 #include "param.h"
 #include "list.h"
+#include "stat.h"
 #include "spinlock.h"
-#include "fs.h"
 
 #ifndef XV6_VFS_H_
 #define XV6_VFS_H_
 
+struct buf;
+
+#define ROOTINO 1  // root i-number
+#define BSIZE 512  // block size
+
 #define min(a, b) ((a) < (b) ? (a) : (b))
+
+// Disk layout:
+// [ boot block | super block | log | inode blocks | free bit map | data blocks ]
+//
+// mkfs computes the super block and builds an initial file system. The super describes
+// the disk layout:
+struct superblock {
+  uint size;         // Size of file system image (blocks)
+  uint nblocks;      // Number of data blocks
+  uint ninodes;      // Number of inodes.
+  uint nlog;         // Number of log blocks
+  uint logstart;     // Block number of first log block
+  uint inodestart;   // Block number of first inode block
+  uint bmapstart;    // Block number of first free map block
+};
 
 struct inode_operations {
   struct inode* (*dirlookup)(struct inode *dp, char *name, uint *off);
@@ -25,6 +45,10 @@ struct inode_operations {
   int (*unlink)(struct inode *dp, uint off);
   int (*isdirempty)(struct inode *dp);
 };
+
+#define NDIRECT 12
+#define NINDIRECT (BSIZE / sizeof(uint))
+#define MAXFILE (NDIRECT + NINDIRECT)
 
 // in-memory copy of an inode
 struct inode {
@@ -49,6 +73,14 @@ struct {
   struct spinlock lock;
   struct inode inode[NINODE];
 } icache;
+
+// Directory is a file containing a sequence of dirent structures.
+#define DIRSIZ 14
+
+struct dirent {
+  ushort inum;
+  char name[DIRSIZ];
+};
 
 struct vfs_operations {
   int           (*fs_init)(void);

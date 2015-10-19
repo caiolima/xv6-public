@@ -7,23 +7,11 @@
 #include "mmu.h"
 #include "proc.h"
 #include "spinlock.h"
-#include "fs.h"
+#include "vfs.h"
 #include "buf.h"
 #include "file.h"
-#include "vfs.h"
 #include "vfsmount.h"
-
-// Filesystem operations
-int            s5fs_init(void);
-int            s5_mount(struct inode *, struct inode *);
-int            s5_unmount(struct inode *);
-struct inode*  s5_getroot();
-void           s5_readsb(int dev, struct superblock *sb);
-struct inode*  s5_ialloc(uint dev, short type);
-uint           s5_balloc(uint dev);
-void           s5_bzero(int dev, int bno);
-void           s5_bfree(int dev, uint b);
-int            s5_namecmp(const char *s, const char *t);
+#include "s5.h"
 
 struct vfs_operations s5_ops = {
   .fs_init = &s5fs_init,
@@ -40,20 +28,6 @@ struct vfs_operations s5_ops = {
   .bread   = &bread,
   .namecmp = &s5_namecmp
 };
-
-// Inode operations of s5 Filesystem
-struct inode*  s5_dirlookup(struct inode *dp, char *name, uint *off);
-void           s5_iupdate(struct inode *ip);
-void           s5_itrunc(struct inode *ip);
-uint           s5_bmap(struct inode *ip, uint bn);
-void           s5_ilock(struct inode* ip);
-void           s5_iunlock(struct inode* ip);
-void           s5_stati(struct inode *ip, struct stat *st);
-int            s5_readi(struct inode *ip, char *dst, uint off, uint n);
-int            s5_writei(struct inode *ip, char *src, uint off, uint n);
-int            s5_dirlink(struct inode *dp, char *name, uint inum);
-int            s5_unlink(struct inode *dp, uint off);
-int            s5_isdirempty(struct inode *dp);
 
 struct inode_operations s5_iops = {
   .dirlookup  = &s5_dirlookup,
@@ -75,7 +49,6 @@ struct filesystem_type s5fs = {
   .ops = &s5_ops,
   .iops = &s5_iops
 };
-
 
 int
 inits5fs(void)

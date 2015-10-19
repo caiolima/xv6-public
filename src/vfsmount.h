@@ -1,7 +1,7 @@
 // This file implements the Mount table and utilities functions
 
 #include "param.h"
-#include "fs.h"
+#include "vfs.h"
 #include "file.h"
 #include "spinlock.h"
 

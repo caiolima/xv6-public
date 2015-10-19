@@ -9,9 +9,10 @@
 #include "x86.h"
 #include "traps.h"
 #include "spinlock.h"
-#include "fs.h"
+#include "vfs.h"
 #include "buf.h"
 #include "device.h"
+#include "s5.h"
 
 #define SECTOR_SIZE   512
 #define IDE_BSY       0x80
@@ -126,26 +127,6 @@ ideinit(void)
       break;
     }
   }
-
-  // Check if disk 2 is present
-  /* outb(0x176, 0xe0 | (0<<4)); */
-  /* for(i=0; i<1000; i++){ */
-  /*   if(inb(0x177) != 0){ */
-  /*     havedisk2 = 1; */
-  /*     cprintf("Identified disk 2 on 0\n"); */
-  /*     break; */
-  /*   } */
-  /* } */
-
-  // Check if disk 2 is present
-  /* outb(0x176, 0xe0 | (1<<4)); */
-  /* for(i=0; i<1000; i++){ */
-  /*   if(inb(0x177) != 0){ */
-  /*     havedisk2 = 1; */
-  /*     cprintf("Identified disk 2 on 1\n"); */
-  /*     break; */
-  /*   } */
-  /* } */
 
   // Switch back to disk 0.
   outb(0x1f6, 0xe0 | (0<<4));

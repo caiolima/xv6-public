@@ -1,3 +1,6 @@
+#ifndef XV6_BUF_H_
+#define XV6_BUF_H_
+
 struct buf {
   int flags;
   uint dev;
@@ -10,4 +13,6 @@ struct buf {
 #define B_BUSY  0x1  // buffer is locked by some process
 #define B_VALID 0x2  // buffer has been read from disk
 #define B_DIRTY 0x4  // buffer needs to be written to disk
+
+#endif /* XV6_BUF_H_ */
 
