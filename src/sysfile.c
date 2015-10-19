@@ -10,7 +10,6 @@
 #include "stat.h"
 #include "mmu.h"
 #include "proc.h"
-#include "fs.h"
 #include "file.h"
 #include "fcntl.h"
 #include "vfs.h"

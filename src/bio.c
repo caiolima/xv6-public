@@ -24,7 +24,7 @@
 #include "defs.h"
 #include "param.h"
 #include "spinlock.h"
-#include "fs.h"
+#include "vfs.h"
 #include "buf.h"
 
 struct {

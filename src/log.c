@@ -2,8 +2,9 @@
 #include "defs.h"
 #include "param.h"
 #include "spinlock.h"
-#include "fs.h"
+#include "vfs.h"
 #include "buf.h"
+#include "s5.h"
 
 // Simple logging that allows concurrent FS system calls.
 //
@@ -68,7 +69,7 @@ initlog(int dev)
   struct superblock sb;
   initlock(&log[dev].lock, logname);
 
-  readsb(dev, &sb);
+  s5_readsb(dev, &sb);
   log[dev].start = sb.logstart;
   log[dev].size = sb.nlog;
   log[dev].dev = dev;

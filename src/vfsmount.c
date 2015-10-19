@@ -2,7 +2,7 @@
 #include "param.h"
 #include "defs.h"
 #include "spinlock.h"
-#include "fs.h"
+#include "vfs.h"
 #include "file.h"
 #include "vfsmount.h"
 
