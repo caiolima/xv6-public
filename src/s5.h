@@ -6,6 +6,27 @@
 #ifndef XV6_S5_H_
 #define XV6_S5_H_
 
+// Disk layout:
+// [ boot block | super block | log | inode blocks | free bit map | data blocks ]
+//
+// mkfs computes the super block and builds an initial file system. The super describes
+// the disk layout:
+
+struct s5_superblock {
+  uint size;         // Size of file system image (blocks)
+  uint nblocks;      // Number of data blocks
+  uint ninodes;      // Number of inodes.
+  uint nlog;         // Number of log blocks
+  uint logstart;     // Block number of first log block
+  uint inodestart;   // Block number of first inode block
+  uint bmapstart;    // Block number of first free map block
+
+  int flags;          // Flag to S5 Superblock.
+};
+
+#define S5_SB_FREE 0
+#define S5_SB_USED 1
+
 // On-disk inode structure
 struct dinode {
   short type;           // File type

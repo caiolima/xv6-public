@@ -29,7 +29,7 @@ int nmeta;    // Number of meta blocks (boot, sb, nlog, inode, bitmap)
 int nblocks;  // Number of data blocks
 
 int fsfd;
-struct superblock sb;
+struct s5_superblock sb;
 char zeroes[BSIZE];
 uint freeinode = 1;
 uint freeblock;
@@ -119,7 +119,7 @@ main(int argc, char *argv[])
     wsect(i, zeroes);
 
   memset(buf, 0, sizeof(buf));
-  memmove(buf, &sb, sizeof(sb));
+  memmove(buf, &sb, sizeof(sb) - sizeof(sb.flags));
   wsect(1, buf);
 
   rootino = ialloc(T_DIR);

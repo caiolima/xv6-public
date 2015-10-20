@@ -292,8 +292,8 @@ iinit(int dev)
 {
   initlock(&icache.lock, "icache");
   rootfs->fs_t->ops->readsb(dev, &sb[dev]);
-  cprintf("sb: size %d nblocks %d ninodes %d nlog %d logstart %d inodestart %d bmap start %d\n", sb[dev].size,
-          sb[dev].nblocks, sb[dev].ninodes, sb[dev].nlog, sb[dev].logstart, sb[dev].inodestart, sb[dev].bmapstart);
+  /* cprintf("sb: size %d nblocks %d ninodes %d nlog %d logstart %d inodestart %d bmap start %d\n", sb[dev].size, */
+  /*         sb[dev].nblocks, sb[dev].ninodes, sb[dev].nlog, sb[dev].logstart, sb[dev].inodestart, sb[dev].bmapstart); */
 }
 
 // Find the inode with number inum on device dev

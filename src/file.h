@@ -14,9 +14,6 @@ struct file {
   uint off;
 };
 
-// Inode main operations
-struct inode* iget(uint dev, uint inum);
-
 struct superblock sb[NDEV];
 
 // table mapping major device number to

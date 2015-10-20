@@ -13,6 +13,30 @@
 #include "vfsmount.h"
 #include "s5.h"
 
+static struct {
+  struct spinlock lock;
+  struct s5_superblock sb[MAXVFSSIZE];
+} s5_sb_pool; // It is a Pool of S5 Superblock Filesystems
+
+struct s5_superblock*
+alloc_s5_sb()
+{
+  struct s5_superblock *sb;
+
+  acquire(&s5_sb_pool.lock);
+  for (sb = &s5_sb_pool.sb[0]; sb < &s5_sb_pool.sb[MAXVFSSIZE]; sb++) {
+    if (sb->flags == S5_SB_FREE) {
+      sb->flags |= S5_SB_USED;
+      release(&s5_sb_pool.lock);
+
+      return sb;
+    }
+  }
+  release(&s5_sb_pool.lock);
+
+  return 0;
+}
+
 struct vfs_operations s5_ops = {
   .fs_init = &s5fs_init,
   .mount   = &s5_mount,
@@ -53,6 +77,7 @@ struct filesystem_type s5fs = {
 int
 inits5fs(void)
 {
+  initlock(&s5_sb_pool.lock, "s5_sb_poll");
   return register_fs(&s5fs);
 }
 
@@ -120,10 +145,22 @@ void
 s5_readsb(int dev, struct superblock *sb)
 {
   struct buf *bp;
+  struct s5_superblock *s5sb;
+
+  if((sb->flags & SB_NOT_LOADED) == 0) {
+    s5sb = alloc_s5_sb(); // Allocate a new S5 sb struct to the superblock.
+  } else{
+    s5sb = sb->fs_info;
+  }
 
   bp = s5_ops.bread(dev, 1);
-  memmove(sb, bp->data, sizeof(*sb));
+  memmove(s5sb, bp->data, sizeof(*s5sb) - sizeof(s5sb->flags));
   s5_ops.brelse(bp);
+
+  sb->major = IDEMAJOR;
+  sb->minor = dev;
+  sb->blocksize = BSIZE;
+  sb->fs_info = s5sb;
 }
 
 struct inode*
@@ -132,9 +169,12 @@ s5_ialloc(uint dev, short type)
   int inum;
   struct buf *bp;
   struct dinode *dip;
+  struct s5_superblock *s5sb;
 
-  for(inum = 1; inum < sb[dev].ninodes; inum++){
-    bp = s5_ops.bread(dev, IBLOCK(inum, sb[dev]));
+  s5sb = sb[dev].fs_info;
+
+  for(inum = 1; inum < s5sb->ninodes; inum++){
+    bp = s5_ops.bread(dev, IBLOCK(inum, (*s5sb)));
     dip = (struct dinode*)bp->data + inum%IPB;
     if(dip->type == 0){  // a free inode
       memset(dip, 0, sizeof(*dip));
@@ -153,11 +193,13 @@ s5_balloc(uint dev)
 {
   int b, bi, m;
   struct buf *bp;
+  struct s5_superblock *s5sb;
 
+  s5sb = sb[dev].fs_info;
   bp = 0;
-  for (b = 0; b < sb[dev].size; b += BPB) {
-    bp = s5_ops.bread(dev, BBLOCK(b, sb[dev]));
-    for (bi = 0; bi < BPB && b + bi < sb[dev].size; bi++) {
+  for (b = 0; b < s5sb->size; b += BPB) {
+    bp = s5_ops.bread(dev, BBLOCK(b, (*s5sb)));
+    for (bi = 0; bi < BPB && b + bi < s5sb->size; bi++) {
       m = 1 << (bi % 8);
       if ((bp->data[bi/8] & m) == 0) {  // Is block free?
         bp->data[bi/8] |= m;  // Mark block in use.
@@ -188,9 +230,11 @@ s5_bfree(int dev, uint b)
 {
   struct buf *bp;
   int bi, m;
+  struct s5_superblock *s5sb;
 
+  s5sb = sb[dev].fs_info;
   s5_ops.readsb(dev, &sb[dev]);
-  bp = s5_ops.bread(dev, BBLOCK(b, sb[dev]));
+  bp = s5_ops.bread(dev, BBLOCK(b, (*s5sb)));
   bi = b % BPB;
   m = 1 << (bi % 8);
   if((bp->data[bi/8] & m) == 0)
@@ -231,8 +275,10 @@ s5_iupdate(struct inode *ip)
 {
   struct buf *bp;
   struct dinode *dip;
+  struct s5_superblock *s5sb;
 
-  bp = s5_ops.bread(ip->dev, IBLOCK(ip->inum, sb[ip->dev]));
+  s5sb = sb[ip->dev].fs_info;
+  bp = s5_ops.bread(ip->dev, IBLOCK(ip->inum, (*s5sb)));
   dip = (struct dinode*)bp->data + ip->inum%IPB;
   dip->type = ip->type;
   dip->major = ip->major;
@@ -309,6 +355,9 @@ s5_ilock(struct inode *ip)
 {
   struct buf *bp;
   struct dinode *dip;
+  struct s5_superblock *s5sb;
+
+  s5sb = sb[ip->dev].fs_info;
 
   if(ip == 0 || ip->ref < 1)
     panic("ilock");
@@ -320,7 +369,7 @@ s5_ilock(struct inode *ip)
   release(&icache.lock);
 
   if (!(ip->flags & I_VALID)) {
-    bp = s5_ops.bread(ip->dev, IBLOCK(ip->inum, sb[ip->dev]));
+    bp = s5_ops.bread(ip->dev, IBLOCK(ip->inum, (*s5sb)));
     dip = (struct dinode*)bp->data + ip->inum%IPB;
     ip->type = dip->type;
     ip->major = dip->major;
