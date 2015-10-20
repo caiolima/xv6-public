@@ -15,4 +15,5 @@
 #define MAXVFSSIZE   4  // size of file system in blocks
 #define IDEMAJOR     0  // IDE major block device
 #define ROOTFSTYPE   "s5"
+#define MAXBSIZE     4096 // The Maximum BSIZE
 

@@ -12,10 +12,10 @@
 // * Do not use the buffer after calling brelse.
 // * Only one process at a time can use a buffer,
 //     so do not keep them longer than necessary.
-// 
+//
 // The implementation uses three state flags internally:
 // * B_BUSY: the block has been returned from bread
-//     and has not been passed back to brelse.  
+//     and has not been passed back to brelse.
 // * B_VALID: the buffer data has been read from the disk.
 // * B_DIRTY: the buffer data has been modified
 //     and needs to be written to disk.
