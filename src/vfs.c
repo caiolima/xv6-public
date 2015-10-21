@@ -171,32 +171,6 @@ generic_stati(struct inode *ip, struct stat *st)
 }
 
 int
-generic_readi(struct inode *ip, char *dst, uint off, uint n)
-{
-  uint tot, m;
-  struct buf *bp;
-
-  if(ip->type == T_DEV){
-    if(ip->major < 0 || ip->major >= NDEV || !devsw[ip->major].read)
-      return -1;
-    return devsw[ip->major].read(ip, dst, n);
-  }
-
-  if(off > ip->size || off + n < off)
-    return -1;
-  if(off + n > ip->size)
-    n = ip->size - off;
-
-  for(tot=0; tot<n; tot+=m, off+=m, dst+=m){
-    bp = ip->fs_t->ops->bread(ip->dev, ip->iops->bmap(ip, off/BSIZE));
-    m = min(n - tot, BSIZE - off%BSIZE);
-    memmove(dst, bp->data + off%BSIZE, m);
-    ip->fs_t->ops->brelse(bp);
-  }
-  return n;
-}
-
-int
 generic_dirlink(struct inode *dp, char *name, uint inum)
 {
   int off;
@@ -458,7 +432,7 @@ skipelem(char *path, char *name)
 static struct inode*
 namex(char *path, int nameiparent, char *name)
 {
-  struct inode *ip, *next;
+  struct inode *ip, *next, *ir;
 
   if(*path == '/')
     ip = rootfs->fs_t->ops->getroot(IDEMAJOR, ROOTDEV);
@@ -483,7 +457,9 @@ namex(char *path, int nameiparent, char *name)
       return 0;
     }
 
-    if (next->inum == ROOTINO && isinoderoot(ip) && (strncmp(name, "..", 2) == 0)) {
+    ir = next->fs_t->ops->getroot(IDEMAJOR, next->dev);
+
+    if (next->inum == ir->inum  && isinoderoot(ip) && (strncmp(name, "..", 2) == 0)) {
       struct inode *mntinode = mtablemntinode(ip);
       iunlockput(ip);
       ip = mntinode;

@@ -25,6 +25,7 @@
 #include "param.h"
 #include "spinlock.h"
 #include "vfs.h"
+#include "file.h"
 #include "buf.h"
 
 struct {
@@ -88,6 +89,7 @@ bget(uint dev, uint blockno)
       b->dev = dev;
       b->blockno = blockno;
       b->flags = B_BUSY;
+      b->bsize = sb[dev].blocksize;
       release(&bcache.lock);
       return b;
     }

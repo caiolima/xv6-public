@@ -61,7 +61,7 @@ struct inode_operations s5_iops = {
   .ilock      = &s5_ilock,
   .iunlock    = &generic_iunlock,
   .stati      = &generic_stati,
-  .readi      = &generic_readi,
+  .readi      = &s5_readi,
   .writei     = &s5_writei,
   .dirlink    = &generic_dirlink,
   .unlink     = &s5_unlink,
@@ -153,13 +153,15 @@ s5_readsb(int dev, struct superblock *sb)
     s5sb = sb->fs_info;
   }
 
+  // These sets are needed because of bread
+  sb->major = IDEMAJOR;
+  sb->minor = dev;
+  sb->blocksize = BSIZE;
+
   bp = s5_ops.bread(dev, 1);
   memmove(s5sb, bp->data, sizeof(*s5sb) - sizeof(s5sb->flags));
   s5_ops.brelse(bp);
 
-  sb->major = IDEMAJOR;
-  sb->minor = dev;
-  sb->blocksize = BSIZE;
   sb->fs_info = s5sb;
 }
 
@@ -382,6 +384,32 @@ s5_ilock(struct inode *ip)
     if (ip->type == 0)
       panic("ilock: no type");
   }
+}
+
+int
+s5_readi(struct inode *ip, char *dst, uint off, uint n)
+{
+  uint tot, m;
+  struct buf *bp;
+
+  if(ip->type == T_DEV){
+    if(ip->major < 0 || ip->major >= NDEV || !devsw[ip->major].read)
+      return -1;
+    return devsw[ip->major].read(ip, dst, n);
+  }
+
+  if(off > ip->size || off + n < off)
+    return -1;
+  if(off + n > ip->size)
+    n = ip->size - off;
+
+  for(tot=0; tot<n; tot+=m, off+=m, dst+=m){
+    bp = ip->fs_t->ops->bread(ip->dev, ip->iops->bmap(ip, off/BSIZE));
+    m = min(n - tot, BSIZE - off%BSIZE);
+    memmove(dst, bp->data + off%BSIZE, m);
+    ip->fs_t->ops->brelse(bp);
+  }
+  return n;
 }
 
 int

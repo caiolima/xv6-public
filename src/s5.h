@@ -6,6 +6,9 @@
 #ifndef XV6_S5_H_
 #define XV6_S5_H_
 
+#define ROOTINO 1  // root i-number
+#define BSIZE 512  // block size
+
 // Disk layout:
 // [ boot block | super block | log | inode blocks | free bit map | data blocks ]
 //

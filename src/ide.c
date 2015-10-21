@@ -149,10 +149,10 @@ idestart(struct buf *b)
     baseport = 0x170;
   }
 
-  int sector_per_block =  BSIZE/SECTOR_SIZE;
+  int sector_per_block =  b->bsize/SECTOR_SIZE;
   int sector = b->blockno * sector_per_block;
 
-  if (sector_per_block > 7) panic("idestart");
+  if (sector_per_block > 16) panic("idestart");
 
   idewait(0);
 
@@ -169,7 +169,7 @@ idestart(struct buf *b)
   outb(baseport + 6, 0xe0 | ((b->dev&1)<<4) | ((sector>>24)&0x0f));
   if(b->flags & B_DIRTY){
     outb(baseport + 7, IDE_CMD_WRITE);
-    outsl(baseport, b->data, BSIZE/4);
+    outsl(baseport, b->data, b->bsize/4);
   } else {
     outb(baseport + 7, IDE_CMD_READ);
   }
@@ -199,7 +199,7 @@ ideintr(int secflag)
 
   // Read data if needed.
   if(!(b->flags & B_DIRTY) && idewait(1) >= 0)
-    insl(port, b->data, BSIZE/4);
+    insl(port, b->data, b->bsize/4);
 
   // Wake process waiting for this buf.
   b->flags |= B_VALID;

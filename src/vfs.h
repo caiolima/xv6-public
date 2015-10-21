@@ -11,9 +11,6 @@
 
 struct buf;
 
-#define ROOTINO 1  // root i-number
-#define BSIZE 512  // block size
-
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
 struct superblock {

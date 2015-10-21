@@ -34,7 +34,6 @@ char zeroes[BSIZE];
 uint freeinode = 1;
 uint freeblock;
 
-
 void balloc(int);
 void wsect(uint, void*);
 void winode(uint, struct dinode*);
