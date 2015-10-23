@@ -277,6 +277,7 @@ struct inode*
 iget(uint dev, uint inum)
 {
   struct inode *ip, *empty;
+  struct filesystem_type *fs_t;
 
   acquire(&icache.lock);
 
@@ -311,14 +312,13 @@ iget(uint dev, uint inum)
   if(empty == 0)
     panic("iget: no inodes");
 
+  fs_t = getvfsentry(IDEMAJOR, dev)->fs_t;
+
   ip = empty;
   ip->dev = dev;
   ip->inum = inum;
   ip->ref = 1;
   ip->flags = 0;
-
-  struct filesystem_type *fs_t = getvfsentry(IDEMAJOR, dev)->fs_t;
-
   ip->fs_t = fs_t;
   ip->iops = fs_t->iops;
 

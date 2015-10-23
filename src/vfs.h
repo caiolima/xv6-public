@@ -52,14 +52,15 @@ struct inode {
   int flags;                    // I_BUSY, I_VALID
   struct filesystem_type *fs_t; // The Filesystem type this inode is stored in
   struct inode_operations *iops; // The specific inode operations
+  void *i_private;               // File System specific informations
 
-  short type;                   // copy of disk inode
-  short major;
-  short minor;
-  short nlink;
-  uint size;
-  uint addrs[NDIRECT+1];
+  short type;           // File type
+  short major;          // Major device number (T_DEV only)
+  short minor;          // Minor device number (T_DEV only)
+  short nlink;          // Number of links to inode in file system
+  uint size;            // Size of file (bytes)
 };
+
 #define I_BUSY 0x1
 #define I_VALID 0x2
 

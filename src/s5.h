@@ -27,6 +27,15 @@ struct s5_superblock {
   int flags;          // Flag to S5 Superblock.
 };
 
+struct s5_inode {
+  short type;
+  short major;
+  short minor;
+  short nlink;
+  uint size;
+  uint addrs[NDIRECT+1];
+};
+
 #define S5_SB_FREE 0
 #define S5_SB_USED 1
 

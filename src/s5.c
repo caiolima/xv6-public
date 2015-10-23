@@ -278,7 +278,9 @@ s5_iupdate(struct inode *ip)
   struct buf *bp;
   struct dinode *dip;
   struct s5_superblock *s5sb;
+  struct s5_inode *s5ip;
 
+  s5ip = ip->i_private;
   s5sb = sb[ip->dev].fs_info;
   bp = s5_ops.bread(ip->dev, IBLOCK(ip->inum, (*s5sb)));
   dip = (struct dinode*)bp->data + ip->inum%IPB;
@@ -287,7 +289,7 @@ s5_iupdate(struct inode *ip)
   dip->minor = ip->minor;
   dip->nlink = ip->nlink;
   dip->size = ip->size;
-  memmove(dip->addrs, ip->addrs, sizeof(ip->addrs));
+  memmove(dip->addrs, s5ip->addrs, sizeof(s5ip->addrs));
   log_write(bp);
   s5_ops.brelse(bp);
 }
@@ -298,24 +300,27 @@ s5_itrunc(struct inode *ip)
   int i, j;
   struct buf *bp;
   uint *a;
+  struct s5_inode *s5ip;
+
+  s5ip = ip->i_private;
 
   for(i = 0; i < NDIRECT; i++){
-    if(ip->addrs[i]){
-      s5_ops.bfree(ip->dev, ip->addrs[i]);
-      ip->addrs[i] = 0;
+    if(s5ip->addrs[i]){
+      s5_ops.bfree(ip->dev, s5ip->addrs[i]);
+      s5ip->addrs[i] = 0;
     }
   }
 
-  if(ip->addrs[NDIRECT]){
-    bp = s5_ops.bread(ip->dev, ip->addrs[NDIRECT]);
+  if(s5ip->addrs[NDIRECT]){
+    bp = s5_ops.bread(ip->dev, s5ip->addrs[NDIRECT]);
     a = (uint*)bp->data;
     for(j = 0; j < NINDIRECT; j++){
       if(a[j])
         s5_ops.bfree(ip->dev, a[j]);
     }
     s5_ops.brelse(bp);
-    s5_ops.bfree(ip->dev, ip->addrs[NDIRECT]);
-    ip->addrs[NDIRECT] = 0;
+    s5_ops.bfree(ip->dev, s5ip->addrs[NDIRECT]);
+    s5ip->addrs[NDIRECT] = 0;
   }
 
   ip->size = 0;
@@ -327,18 +332,21 @@ s5_bmap(struct inode *ip, uint bn)
 {
   uint addr, *a;
   struct buf *bp;
+  struct s5_inode *s5ip;
+
+  s5ip = ip->i_private;
 
   if(bn < NDIRECT){
-    if((addr = ip->addrs[bn]) == 0)
-      ip->addrs[bn] = addr = s5_ops.balloc(ip->dev);
+    if((addr = s5ip->addrs[bn]) == 0)
+      s5ip->addrs[bn] = addr = s5_ops.balloc(ip->dev);
     return addr;
   }
   bn -= NDIRECT;
 
   if(bn < NINDIRECT){
     // Load indirect block, allocating if necessary.
-    if((addr = ip->addrs[NDIRECT]) == 0)
-      ip->addrs[NDIRECT] = addr = s5_ops.balloc(ip->dev);
+    if((addr = s5ip->addrs[NDIRECT]) == 0)
+      s5ip->addrs[NDIRECT] = addr = s5_ops.balloc(ip->dev);
     bp = s5_ops.bread(ip->dev, addr);
     a = (uint*)bp->data;
     if((addr = a[bn]) == 0){
