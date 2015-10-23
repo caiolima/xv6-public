@@ -13,6 +13,35 @@
 #include "vfsmount.h"
 #include "s5.h"
 
+/*
+ * Its is a pool to allocate s5 inodes structs.
+ * We use it becase we don't have a kmalloc function.
+ * With an kmalloc implementatios, it need to be removed.
+ */
+static struct {
+  struct spinlock lock;
+  struct s5_inode s5_i_entry[NINODE];
+} s5_inode_pool;
+
+struct s5_inode*
+alloc_s5_inode()
+{
+  struct s5_inode *ip;
+
+  acquire(&s5_inode_pool.lock);
+  for (ip = &s5_inode_pool.s5_i_entry[0]; ip < &s5_inode_pool.s5_i_entry[NINODE]; ip++) {
+    if (ip->flag == S5_INODE_FREE) {
+      ip->flag |= S5_INODE_USED;
+      release(&s5_inode_pool.lock);
+
+      return ip;
+    }
+  }
+  release(&s5_inode_pool.lock);
+
+  return 0;
+}
+
 static struct {
   struct spinlock lock;
   struct s5_superblock sb[MAXVFSSIZE];
@@ -57,6 +86,7 @@ struct inode_operations s5_iops = {
   .dirlookup  = &s5_dirlookup,
   .iupdate    = &s5_iupdate,
   .itrunc     = &s5_itrunc,
+  .cleanup    = &s5_cleanup,
   .bmap       = &s5_bmap,
   .ilock      = &s5_ilock,
   .iunlock    = &generic_iunlock,
@@ -77,7 +107,8 @@ struct filesystem_type s5fs = {
 int
 inits5fs(void)
 {
-  initlock(&s5_sb_pool.lock, "s5_sb_poll");
+  initlock(&s5_sb_pool.lock, "s5_sb_pool");
+  initlock(&s5_inode_pool.lock, "s5_inode_pool");
   return register_fs(&s5fs);
 }
 
@@ -138,7 +169,7 @@ s5_unmount(struct inode *devi)
 struct inode *
 s5_getroot(int major, int minor)
 {
-  return iget(minor, ROOTINO);
+  return s5_iget(minor, ROOTINO);
 }
 
 void
@@ -183,7 +214,7 @@ s5_ialloc(uint dev, short type)
       dip->type = type;
       log_write(bp);   // mark it allocated on the disk
       s5_ops.brelse(bp);
-      return iget(dev, inum);
+      return s5_iget(dev, inum);
     }
     s5_ops.brelse(bp);
   }
@@ -265,7 +296,7 @@ s5_dirlookup(struct inode *dp, char *name, uint *poff)
       if(poff)
         *poff = off;
       inum = de.inum;
-      return iget(dp->dev, inum);
+      return s5_iget(dp->dev, inum);
     }
   }
 
@@ -314,8 +345,8 @@ s5_itrunc(struct inode *ip)
   if(s5ip->addrs[NDIRECT]){
     bp = s5_ops.bread(ip->dev, s5ip->addrs[NDIRECT]);
     a = (uint*)bp->data;
-    for(j = 0; j < NINDIRECT; j++){
-      if(a[j])
+    for (j = 0; j < NINDIRECT; j++) {
+      if (a[j])
         s5_ops.bfree(ip->dev, a[j]);
     }
     s5_ops.brelse(bp);
@@ -325,6 +356,12 @@ s5_itrunc(struct inode *ip)
 
   ip->size = 0;
   s5_iops.iupdate(ip);
+}
+
+void
+s5_cleanup(struct inode *ip)
+{
+  memset(ip->i_private, 0, sizeof(struct s5_inode));
 }
 
 uint
@@ -366,6 +403,9 @@ s5_ilock(struct inode *ip)
   struct buf *bp;
   struct dinode *dip;
   struct s5_superblock *s5sb;
+  struct s5_inode *s5ip;
+
+  s5ip = ip->i_private;
 
   s5sb = sb[ip->dev].fs_info;
 
@@ -386,7 +426,7 @@ s5_ilock(struct inode *ip)
     ip->minor = dip->minor;
     ip->nlink = dip->nlink;
     ip->size = dip->size;
-    memmove(ip->addrs, dip->addrs, sizeof(ip->addrs));
+    memmove(s5ip->addrs, dip->addrs, sizeof(s5ip->addrs));
     s5_ops.brelse(bp);
     ip->flags |= I_VALID;
     if (ip->type == 0)
@@ -483,5 +523,25 @@ int
 s5_namecmp(const char *s, const char *t)
 {
   return strncmp(s, t, DIRSIZ);
+}
+
+int
+s5_fill_inode(struct inode *ip) {
+  struct s5_inode *s5ip;
+
+  s5ip = alloc_s5_inode();
+  if (!s5ip) {
+    panic("No s5 inode available");
+  }
+
+  ip->i_private = s5ip;
+
+  return 1;
+}
+
+struct inode*
+s5_iget(uint dev, uint inum)
+{
+  return iget(dev, inum, &s5_fill_inode);
 }
 

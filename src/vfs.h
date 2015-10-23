@@ -29,6 +29,7 @@ struct inode_operations {
   struct inode* (*dirlookup)(struct inode *dp, char *name, uint *off);
   void (*iupdate)(struct inode *ip);
   void (*itrunc)(struct inode *ip);
+  void (*cleanup)(struct inode *ip);
   uint (*bmap)(struct inode *ip, uint bn);
   void (*ilock)(struct inode* ip);
   void (*iunlock)(struct inode* ip);
@@ -70,7 +71,7 @@ struct {
 } icache;
 
 // Inode main operations
-struct inode* iget(uint dev, uint inum);
+struct inode* iget(uint dev, uint inum, int (*fill_super)(struct inode *));
 
 // Directory is a file containing a sequence of dirent structures.
 #define DIRSIZ 14

@@ -274,7 +274,7 @@ iinit(int dev)
 // and return the in-memory copy. Does not lock
 // the inode and does not read it from disk.
 struct inode*
-iget(uint dev, uint inum)
+iget(uint dev, uint inum, int (*fill_inode)(struct inode *))
 {
   struct inode *ip, *empty;
   struct filesystem_type *fs_t;
@@ -322,6 +322,10 @@ iget(uint dev, uint inum)
   ip->fs_t = fs_t;
   ip->iops = fs_t->iops;
 
+  if (!fill_inode(ip)) {
+    panic("Error on fill inode");
+  }
+
   release(&icache.lock);
 
   return ip;
@@ -358,11 +362,17 @@ iput(struct inode *ip)
     ip->iops->itrunc(ip);
     ip->type = 0;
     ip->iops->iupdate(ip);
+    ip->iops->cleanup(ip);
     acquire(&icache.lock);
     ip->flags = 0;
     wakeup(ip);
   }
   ip->ref--;
+
+  if (ip->ref == 0 ) {
+    ip->iops->cleanup(ip);
+  }
+
   release(&icache.lock);
 }
 

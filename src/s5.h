@@ -27,17 +27,21 @@ struct s5_superblock {
   int flags;          // Flag to S5 Superblock.
 };
 
+#define S5_SB_FREE 0
+#define S5_SB_USED 1
+
 struct s5_inode {
   short type;
   short major;
   short minor;
   short nlink;
   uint size;
+  int flag;
   uint addrs[NDIRECT+1];
 };
 
-#define S5_SB_FREE 0
-#define S5_SB_USED 1
+#define S5_INODE_FREE 0
+#define S5_INODE_USED 1
 
 // On-disk inode structure
 struct dinode {
@@ -73,11 +77,13 @@ uint           s5_balloc(uint dev);
 void           s5_bzero(int dev, int bno);
 void           s5_bfree(int dev, uint b);
 int            s5_namecmp(const char *s, const char *t);
+struct inode*  s5_iget(uint dev, uint inum);
 
 // Inode operations of s5 Filesystem
 struct inode*  s5_dirlookup(struct inode *dp, char *name, uint *off);
 void           s5_iupdate(struct inode *ip);
 void           s5_itrunc(struct inode *ip);
+void           s5_cleanup(struct inode *ip);
 uint           s5_bmap(struct inode *ip, uint bn);
 void           s5_ilock(struct inode* ip);
 void           s5_iunlock(struct inode* ip);
