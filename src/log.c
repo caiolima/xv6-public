@@ -70,8 +70,10 @@ initlog(int dev)
   initlock(&log[dev].lock, logname);
 
   s5_readsb(dev, &sb);
-  log[dev].start = sb.logstart;
-  log[dev].size = sb.nlog;
+  struct s5_superblock *s5sb = sb.fs_info;
+
+  log[dev].start = s5sb->logstart;
+  log[dev].size = s5sb->nlog;
   log[dev].dev = dev;
   log[dev].flag |= LOGENABLED;
   recover_from_log();

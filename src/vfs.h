@@ -11,30 +11,25 @@
 
 struct buf;
 
-#define ROOTINO 1  // root i-number
-#define BSIZE 512  // block size
-
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
-// Disk layout:
-// [ boot block | super block | log | inode blocks | free bit map | data blocks ]
-//
-// mkfs computes the super block and builds an initial file system. The super describes
-// the disk layout:
 struct superblock {
-  uint size;         // Size of file system image (blocks)
-  uint nblocks;      // Number of data blocks
-  uint ninodes;      // Number of inodes.
-  uint nlog;         // Number of log blocks
-  uint logstart;     // Block number of first log block
-  uint inodestart;   // Block number of first inode block
-  uint bmapstart;    // Block number of first free map block
+  int major;        // Driver major number from it superblocks is stored in.
+  int minor;        // Driver major number from it superblocks is stored in.
+  uint blocksize;  // Block size of this superblock
+  void *fs_info;    // Filesystem-specific info
+
+  int flags;       // Superblock Falgs to map its usage
 };
+
+#define SB_NOT_LOADED 0
+#define SB_INITIALIZED 1
 
 struct inode_operations {
   struct inode* (*dirlookup)(struct inode *dp, char *name, uint *off);
   void (*iupdate)(struct inode *ip);
   void (*itrunc)(struct inode *ip);
+  void (*cleanup)(struct inode *ip);
   uint (*bmap)(struct inode *ip, uint bn);
   void (*ilock)(struct inode* ip);
   void (*iunlock)(struct inode* ip);
@@ -52,20 +47,21 @@ struct inode_operations {
 
 // in-memory copy of an inode
 struct inode {
-  uint dev;                     // Device number
+  uint dev;                     // Minor Device number
   uint inum;                    // Inode number
   int ref;                      // Reference count
   int flags;                    // I_BUSY, I_VALID
   struct filesystem_type *fs_t; // The Filesystem type this inode is stored in
   struct inode_operations *iops; // The specific inode operations
+  void *i_private;               // File System specific informations
 
-  short type;                   // copy of disk inode
-  short major;
-  short minor;
-  short nlink;
-  uint size;
-  uint addrs[NDIRECT+1];
+  short type;           // File type
+  short major;          // Major device number (T_DEV only)
+  short minor;          // Minor device number (T_DEV only)
+  short nlink;          // Number of links to inode in file system
+  uint size;            // Size of file (bytes)
 };
+
 #define I_BUSY 0x1
 #define I_VALID 0x2
 
@@ -73,6 +69,9 @@ struct {
   struct spinlock lock;
   struct inode inode[NINODE];
 } icache;
+
+// Inode main operations
+struct inode* iget(uint dev, uint inum, int (*fill_super)(struct inode *));
 
 // Directory is a file containing a sequence of dirent structures.
 #define DIRSIZ 14

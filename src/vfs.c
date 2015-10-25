@@ -171,32 +171,6 @@ generic_stati(struct inode *ip, struct stat *st)
 }
 
 int
-generic_readi(struct inode *ip, char *dst, uint off, uint n)
-{
-  uint tot, m;
-  struct buf *bp;
-
-  if(ip->type == T_DEV){
-    if(ip->major < 0 || ip->major >= NDEV || !devsw[ip->major].read)
-      return -1;
-    return devsw[ip->major].read(ip, dst, n);
-  }
-
-  if(off > ip->size || off + n < off)
-    return -1;
-  if(off + n > ip->size)
-    n = ip->size - off;
-
-  for(tot=0; tot<n; tot+=m, off+=m, dst+=m){
-    bp = ip->fs_t->ops->bread(ip->dev, ip->iops->bmap(ip, off/BSIZE));
-    m = min(n - tot, BSIZE - off%BSIZE);
-    memmove(dst, bp->data + off%BSIZE, m);
-    ip->fs_t->ops->brelse(bp);
-  }
-  return n;
-}
-
-int
 generic_dirlink(struct inode *dp, char *name, uint inum)
 {
   int off;
@@ -292,17 +266,18 @@ iinit(int dev)
 {
   initlock(&icache.lock, "icache");
   rootfs->fs_t->ops->readsb(dev, &sb[dev]);
-  cprintf("sb: size %d nblocks %d ninodes %d nlog %d logstart %d inodestart %d bmap start %d\n", sb[dev].size,
-          sb[dev].nblocks, sb[dev].ninodes, sb[dev].nlog, sb[dev].logstart, sb[dev].inodestart, sb[dev].bmapstart);
+  /* cprintf("sb: size %d nblocks %d ninodes %d nlog %d logstart %d inodestart %d bmap start %d\n", sb[dev].size, */
+  /*         sb[dev].nblocks, sb[dev].ninodes, sb[dev].nlog, sb[dev].logstart, sb[dev].inodestart, sb[dev].bmapstart); */
 }
 
 // Find the inode with number inum on device dev
 // and return the in-memory copy. Does not lock
 // the inode and does not read it from disk.
 struct inode*
-iget(uint dev, uint inum)
+iget(uint dev, uint inum, int (*fill_inode)(struct inode *))
 {
   struct inode *ip, *empty;
+  struct filesystem_type *fs_t;
 
   acquire(&icache.lock);
 
@@ -337,16 +312,19 @@ iget(uint dev, uint inum)
   if(empty == 0)
     panic("iget: no inodes");
 
+  fs_t = getvfsentry(IDEMAJOR, dev)->fs_t;
+
   ip = empty;
   ip->dev = dev;
   ip->inum = inum;
   ip->ref = 1;
   ip->flags = 0;
-
-  struct filesystem_type *fs_t = getvfsentry(IDEMAJOR, dev)->fs_t;
-
   ip->fs_t = fs_t;
   ip->iops = fs_t->iops;
+
+  if (!fill_inode(ip)) {
+    panic("Error on fill inode");
+  }
 
   release(&icache.lock);
 
@@ -384,11 +362,17 @@ iput(struct inode *ip)
     ip->iops->itrunc(ip);
     ip->type = 0;
     ip->iops->iupdate(ip);
+    ip->iops->cleanup(ip);
     acquire(&icache.lock);
     ip->flags = 0;
     wakeup(ip);
   }
   ip->ref--;
+
+  if (ip->ref == 0 ) {
+    ip->iops->cleanup(ip);
+  }
+
   release(&icache.lock);
 }
 
@@ -458,7 +442,7 @@ skipelem(char *path, char *name)
 static struct inode*
 namex(char *path, int nameiparent, char *name)
 {
-  struct inode *ip, *next;
+  struct inode *ip, *next, *ir;
 
   if(*path == '/')
     ip = rootfs->fs_t->ops->getroot(IDEMAJOR, ROOTDEV);
@@ -483,7 +467,9 @@ namex(char *path, int nameiparent, char *name)
       return 0;
     }
 
-    if (next->inum == ROOTINO && isinoderoot(ip) && (strncmp(name, "..", 2) == 0)) {
+    ir = next->fs_t->ops->getroot(IDEMAJOR, next->dev);
+
+    if (next->inum == ir->inum  && isinoderoot(ip) && (strncmp(name, "..", 2) == 0)) {
       struct inode *mntinode = mtablemntinode(ip);
       iunlockput(ip);
       ip = mntinode;

@@ -7,6 +7,7 @@ struct buf {
   int flags;
   uint dev;
   uint blockno;
+  uint bsize;       // Block Size of this buffer
   struct buf *prev; // LRU cache list
   struct buf *next;
   struct buf *qnext; // disk queue
