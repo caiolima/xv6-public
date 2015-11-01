@@ -193,5 +193,8 @@ int             bdev_open(struct inode *);
 // s5.c
 int             inits5fs(void);
 
+// ext2.c
+int             initext2fs(void);
+
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))

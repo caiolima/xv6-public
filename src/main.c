@@ -8,6 +8,7 @@
 #include "x86.h"
 
 static void startothers(void);
+static void initfss(void);
 static void mpmain(void)  __attribute__((noreturn));
 extern pde_t *kpgdir;
 extern char end[]; // first address after kernel loaded from ELF file
@@ -37,8 +38,7 @@ main(void)
   mountinit();     // mount table
   bdevtableinit(); // block device table
   ideinit();       // disk
-  if (inits5fs() != 0) // init s5 fs
-    panic("S5 not registered");
+  initfss();
   installrootfs();
   if(!ismp)
     timerinit();   // uniprocessor timer
@@ -104,6 +104,15 @@ startothers(void)
     while(c->started == 0)
       ;
   }
+}
+
+static void
+initfss(void) {
+  // Init the supported filesystems
+  if (inits5fs() != 0) // init s5 fs
+    panic("S5 not registered");
+  if (initext2fs() != 0) // init s5 fs
+    panic("ext2 not registered");
 }
 
 // Boot page table used in entry.S and entryother.S.

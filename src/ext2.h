@@ -10,12 +10,13 @@
 #define XV6_EXT2_H_
 
 #define EXT2_MIN_BLKSIZE 1024
+#define EXT2_SUPER_MAGIC 0xEF53
 
 /**
  * This struct is based on the Linux Sorce Code fs/ext2/ext2.h.
  * It is the ext2 superblock layout definition.
  */
-struct ext2_super_block {
+struct ext2_superblock {
   uint32  s_inodes_count;    /* Inodes count */
   uint32  s_blocks_count;    /* Blocks count */
   uint32  s_r_blocks_count;  /* Reserved blocks count */
@@ -85,6 +86,8 @@ struct ext2_super_block {
   uint32  s_default_mount_opts;
   uint32  s_first_meta_bg;   /* First metablock block group */
   uint32  s_reserved[190];  /* Padding to the end of the block */
+
+  int   flags; // Used by the ext2_pool
 };
 
 // Filesystem specific operations

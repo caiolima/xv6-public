@@ -25,6 +25,9 @@ struct superblock {
 #define SB_NOT_LOADED 0
 #define SB_INITIALIZED 1
 
+#define SB_FREE 0
+#define SB_USED 1
+
 struct inode_operations {
   struct inode* (*dirlookup)(struct inode *dp, char *name, uint *off);
   void (*iupdate)(struct inode *ip);
