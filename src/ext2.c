@@ -140,11 +140,7 @@ ext2_unmount(struct inode *devi)
 struct inode *
 ext2_getroot(int major, int minor)
 {
-  struct ext2_superblock *ext2sb;
-
-  ext2sb =  sb[minor].fs_info;
-
-  return ext2_iget(minor, ext2sb->s_first_ino);
+  return ext2_iget(minor, EXT2_ROOT_INO);
 }
 
 static inline int test_root(int a, int b)
@@ -190,8 +186,6 @@ descriptor_loc(struct superblock *sb,
   int has_super = 0;
 
   first_meta_bg = EXT2_SB(sb)->s_es->s_first_meta_bg;
-
-  cprintf("Debug first_meta_bg: %d", first_meta_bg);
 
   if (!EXT2_HAS_INCOMPAT_FEATURE(sb, EXT2_FEATURE_INCOMPAT_META_BG) ||
       nr < first_meta_bg)
@@ -277,10 +271,7 @@ ext2_readsb(int dev, struct superblock *sb)
 
   for (i = 0; i < db_count; i++) {
     block = descriptor_loc(sb, logic_sb_block, i);
-    cprintf("Debug block group desc #%d: %d\n", i, block);
     sbi->s_group_desc[i] = ext2_ops.bread(dev, block);
-    struct ext2_group_desc *bg = (struct ext2_group_desc *)sbi->s_group_desc[i]->data;
-    cprintf("blk_bitmap %d inode bitmap %d inode table %d\n", bg->bg_block_bitmap, bg->bg_inode_bitmap, bg->bg_inode_table);
     if (!sbi->s_group_desc[i]) {
       panic("Error on read ext2  group descriptor");
     }

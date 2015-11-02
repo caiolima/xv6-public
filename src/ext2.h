@@ -197,6 +197,8 @@ struct ext2_inode {
   int flag;
 };
 
+#define EXT2_ROOT_INO  2  /* Root inode */
+
 /*
  * Structure of a blocks group descriptor
  */

@@ -96,11 +96,11 @@ ide_close(int minor)
 
 // Wait for IDE disk to become ready.
 static int
-idewait(int checkerr)
+idewait(int checkerr, int baseport)
 {
   int r;
 
-  while(((r = inb(0x1f7)) & (IDE_BSY|IDE_DRDY)) != IDE_DRDY);
+  while(((r = inb(baseport + 7)) & (IDE_BSY|IDE_DRDY)) != IDE_DRDY);
   if(checkerr && (r & (IDE_DF|IDE_ERR)) != 0)
     return -1;
   return 0;
@@ -120,7 +120,7 @@ ideinit(void)
   if (registerbdev(idedev) != 0 )
     panic("Register IDE device driver");
 
-  idewait(0);
+  idewait(0, 0x1f0);
 
   // Check if disk 1 is present
   outb(0x1f6, 0xe0 | (1<<4));
@@ -157,7 +157,7 @@ idestart(struct buf *b)
 
   if (sector_per_block > 16) panic("idestart");
 
-  idewait(0);
+  idewait(0, baseport);
 
   if (b->dev <= 1) {
     outb(0x3f6, 0);  // generate interrupt to primary bus
@@ -167,7 +167,7 @@ idestart(struct buf *b)
 
   outb(baseport + 2, sector_per_block);  // number of sectors
   outb(baseport + 7, IDE_CMD_SET_MUL);
-  idewait(0);
+  idewait(0, baseport);
 
   outb(baseport + 3, sector & 0xff);
   outb(baseport + 4, (sector >> 8) & 0xff);
@@ -204,7 +204,7 @@ ideintr(int secflag)
   idequeue = b->qnext;
 
   // Read data if needed.
-  if(!(b->flags & B_DIRTY) && idewait(1) >= 0)
+  if(!(b->flags & B_DIRTY) && idewait(1, port) >= 0)
     insl(port, b->data, b->bsize/4);
 
   // Wake process waiting for this buf.
