@@ -16,16 +16,6 @@ static struct {
   struct ext2_sb_info sb[MAXVFSSIZE];
 } ext2_sb_pool; // It is a Pool of S5 Superblock Filesystems
 
-/*
- * Its is a pool to allocate ext2 inodes structs.
- * We use it becase we don't have a kmalloc function.
- * With an kmalloc implementatios, it need to be removed.
- */
-static struct {
-  struct spinlock lock;
-  struct ext2_inode ext2_i_entry[NINODE];
-} ext2_inode_pool;
-
 struct ext2_sb_info*
 alloc_ext2_sb()
 {
@@ -41,25 +31,6 @@ alloc_ext2_sb()
     }
   }
   release(&ext2_sb_pool.lock);
-
-  return 0;
-}
-
-struct ext2_inode*
-alloc_ext2_inode()
-{
-  struct ext2_inode *ip;
-
-  acquire(&ext2_inode_pool.lock);
-  for (ip = &ext2_inode_pool.ext2_i_entry[0]; ip < &ext2_inode_pool.ext2_i_entry[NINODE]; ip++) {
-    if (ip->flag == INODE_FREE) {
-      ip->flag |= INODE_USED;
-      release(&ext2_inode_pool.lock);
-
-      return ip;
-    }
-  }
-  release(&ext2_inode_pool.lock);
 
   return 0;
 }
@@ -177,6 +148,32 @@ ext2_bg_has_super(struct superblock *sb, int group)
   return 1;
 }
 
+struct ext2_group_desc *
+ext2_get_group_desc(struct superblock * sb,
+                    unsigned int block_group,
+                    struct buf ** bh)
+{
+  unsigned long group_desc;
+  unsigned long offset;
+  struct ext2_group_desc * desc;
+  struct ext2_sb_info *sbi = EXT2_SB(sb);
+
+  if (block_group >= sbi->s_groups_count) {
+    panic("Block group # is too large");
+  }
+
+  group_desc = block_group >> EXT2_DESC_PER_BLOCK_BITS(sb);
+  offset = block_group & (EXT2_DESC_PER_BLOCK(sb) - 1);
+  if (!sbi->s_group_desc[group_desc]) {
+    panic("Accessing a group descriptor not loaded");
+  }
+
+  desc = (struct ext2_group_desc *) sbi->s_group_desc[group_desc]->data;
+  if (bh)
+    *bh = sbi->s_group_desc[group_desc];
+  return desc + offset;
+}
+
 static unsigned long
 descriptor_loc(struct superblock *sb,
                unsigned long logic_sb_block,
@@ -207,7 +204,7 @@ ext2_readsb(int dev, struct superblock *sb)
   int db_count, i;
   unsigned long block;
   unsigned long logic_sb_block = 1;
-  /* unsigned long offset = 0; */
+  unsigned long offset = 0;
 
   if((sb->flags & SB_NOT_LOADED) == 0) {
     sbi = alloc_ext2_sb(); // Allocate a new S5 sb struct to the superblock.
@@ -218,7 +215,7 @@ ext2_readsb(int dev, struct superblock *sb)
   // These sets are needed because of bread
   sb->major = IDEMAJOR;
   sb->minor = dev;
-  sb->blocksize = blocksize;
+  sb_set_blocksize(sb, blocksize);
   sb->fs_info = sbi;
 
   bp = ext2_ops.bread(dev, logic_sb_block); // Read the 1024 bytes starting from the byte 1024
@@ -232,7 +229,28 @@ ext2_readsb(int dev, struct superblock *sb)
   }
 
   blocksize = EXT2_MIN_BLKSIZE << es->s_log_block_size;
-  sb->blocksize = blocksize;
+
+  /* If the blocksize doesn't match, re-read the thing.. */
+  if (sb->blocksize != blocksize) {
+    ext2_ops.brelse(bp);
+
+    sb_set_blocksize(sb, blocksize);
+
+    logic_sb_block = EXT2_MIN_BLKSIZE / blocksize;
+    offset = EXT2_MIN_BLKSIZE % blocksize;
+    bp = ext2_ops.bread(dev, logic_sb_block);
+
+    if (!bp) {
+      panic("Error on second ext2 superblock read");
+    }
+
+    es = (struct ext2_superblock *) (((char *)bp->data) + offset);
+    sbi->s_es = es;
+
+    if (es->s_magic != EXT2_SUPER_MAGIC) {
+      panic("error: ext2 magic mismatch");
+    }
+  }
 
   if (es->s_rev_level == EXT2_GOOD_OLD_REV) {
     sbi->s_inode_size = EXT2_GOOD_OLD_INODE_SIZE;
@@ -248,6 +266,9 @@ ext2_readsb(int dev, struct superblock *sb)
   sbi->s_inodes_per_block = sb->blocksize / sbi->s_inode_size;
   sbi->s_itb_per_group = sbi->s_inodes_per_group / sbi->s_inodes_per_block;
   sbi->s_desc_per_block = sb->blocksize / sizeof(struct ext2_group_desc);
+
+  sbi->s_addr_per_block_bits = ilog2(EXT2_ADDR_PER_BLOCK(sb));
+  sbi->s_desc_per_block_bits = ilog2(EXT2_DESC_PER_BLOCK(sb));
 
   if (sbi->s_blocks_per_group > sb->blocksize * 8) {
     panic("error: #blocks per group too big");
@@ -277,7 +298,8 @@ ext2_readsb(int dev, struct superblock *sb)
     }
   }
 
-  cprintf("Finished the superblock read \n");
+  sbi->s_gdb_count = db_count;
+
 }
 
 struct inode*
@@ -377,16 +399,51 @@ ext2_namecmp(const char *s, const char *t)
   return 0;
 }
 
+static struct ext2_inode *
+ext2_get_inode(struct superblock *sb, uint ino)
+{
+  struct buf * bp;
+  unsigned long block_group;
+  unsigned long block;
+  unsigned long offset;
+  struct ext2_group_desc * gdp;
+
+  cprintf("Started execute get inode\n");
+
+  if ((ino != EXT2_ROOT_INO && ino < EXT2_FIRST_INO(sb)) ||
+       ino > EXT2_SB(sb)->s_es->s_inodes_count)
+    panic("Ext2 invalid inode number");
+
+  block_group = (ino - 1) / EXT2_INODES_PER_GROUP(sb);
+  gdp = ext2_get_group_desc(sb, block_group, 0);
+  if (!gdp)
+    panic("Invalid group descriptor at ext2_get_inode");
+
+  /*
+   * Figure out the offset within the block group inode table
+   */
+  offset = ((ino - 1) % EXT2_INODES_PER_GROUP(sb)) * EXT2_INODE_SIZE(sb);
+  block = gdp->bg_inode_table +
+    (offset >> EXT2_BLOCK_SIZE_BITS(sb));
+  if (!(bp = ext2_ops.bread(sb->minor, block)))
+    panic("Error on read the  block inode");
+
+  offset &= (EXT2_BLOCK_SIZE(sb) - 1);
+  return (struct ext2_inode *) (bp->data + offset);
+}
+
+/**
+ * Its is called because the icache lookup failed
+ */
 int
 ext2_fill_inode(struct inode *ip) {
   struct ext2_inode *ext2ip;
 
-  ext2ip = alloc_ext2_inode();
-  if (!ext2ip) {
-    panic("No ext2 inode available");
-  }
+  ext2ip = ext2_get_inode(&sb[ip->dev], ip->inum);
 
   ip->i_private = ext2ip;
+
+  cprintf("Debug root ext2 first block addr: %d, user_id: %d\n", ext2ip->i_block[0], ext2ip->i_uid);
 
   return 1;
 }
