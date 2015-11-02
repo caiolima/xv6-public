@@ -65,6 +65,9 @@ struct inode {
   uint size;            // Size of file (bytes)
 };
 
+#define INODE_FREE 0
+#define INODE_USED 1
+
 #define I_BUSY 0x1
 #define I_VALID 0x2
 
