@@ -23,6 +23,10 @@
 #define IDE_CMD_READ  0x20
 #define IDE_CMD_WRITE 0x30
 
+#define IDE_CMD_READ_MUL  0xC4
+#define IDE_CMD_WRITE_MUL 0xC5
+#define IDE_CMD_SET_MUL   0xC6
+
 // idequeue points to the buf now being read/written to the disk.
 // idequeue->qnext points to the next buf to be processed.
 // You must hold idelock while manipulating queue.
@@ -92,12 +96,11 @@ ide_close(int minor)
 
 // Wait for IDE disk to become ready.
 static int
-idewait(int checkerr)
+idewait(int checkerr, int baseport)
 {
   int r;
 
-  while(((r = inb(0x1f7)) & (IDE_BSY|IDE_DRDY)) != IDE_DRDY) 
-    ;
+  while(((r = inb(baseport + 7)) & (IDE_BSY|IDE_DRDY)) != IDE_DRDY);
   if(checkerr && (r & (IDE_DF|IDE_ERR)) != 0)
     return -1;
   return 0;
@@ -117,7 +120,7 @@ ideinit(void)
   if (registerbdev(idedev) != 0 )
     panic("Register IDE device driver");
 
-  idewait(0);
+  idewait(0, 0x1f0);
 
   // Check if disk 1 is present
   outb(0x1f6, 0xe0 | (1<<4));
@@ -154,7 +157,7 @@ idestart(struct buf *b)
 
   if (sector_per_block > 16) panic("idestart");
 
-  idewait(0);
+  idewait(0, baseport);
 
   if (b->dev <= 1) {
     outb(0x3f6, 0);  // generate interrupt to primary bus
@@ -163,15 +166,19 @@ idestart(struct buf *b)
   }
 
   outb(baseport + 2, sector_per_block);  // number of sectors
+  outb(baseport + 7, IDE_CMD_SET_MUL);
+  idewait(0, baseport);
+
   outb(baseport + 3, sector & 0xff);
   outb(baseport + 4, (sector >> 8) & 0xff);
   outb(baseport + 5, (sector >> 16) & 0xff);
   outb(baseport + 6, 0xe0 | ((b->dev&1)<<4) | ((sector>>24)&0x0f));
+
   if(b->flags & B_DIRTY){
-    outb(baseport + 7, IDE_CMD_WRITE);
+    outb(baseport + 7, IDE_CMD_WRITE_MUL);
     outsl(baseport, b->data, b->bsize/4);
   } else {
-    outb(baseport + 7, IDE_CMD_READ);
+    outb(baseport + 7, IDE_CMD_READ_MUL);
   }
 }
 
@@ -192,13 +199,12 @@ ideintr(int secflag)
   acquire(&idelock);
   if((b = idequeue) == 0){
     release(&idelock);
-    // cprintf("spurious IDE interrupt\n");
     return;
   }
   idequeue = b->qnext;
 
   // Read data if needed.
-  if(!(b->flags & B_DIRTY) && idewait(1) >= 0)
+  if(!(b->flags & B_DIRTY) && idewait(1, port) >= 0)
     insl(port, b->data, b->bsize/4);
 
   // Wake process waiting for this buf.

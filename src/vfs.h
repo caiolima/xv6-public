@@ -18,12 +18,16 @@ struct superblock {
   int minor;        // Driver major number from it superblocks is stored in.
   uint blocksize;  // Block size of this superblock
   void *fs_info;    // Filesystem-specific info
+  unsigned char s_blocksize_bits;
 
   int flags;       // Superblock Falgs to map its usage
 };
 
 #define SB_NOT_LOADED 0
 #define SB_INITIALIZED 1
+
+#define SB_FREE 0
+#define SB_USED 1
 
 struct inode_operations {
   struct inode* (*dirlookup)(struct inode *dp, char *name, uint *off);
@@ -61,6 +65,9 @@ struct inode {
   short nlink;          // Number of links to inode in file system
   uint size;            // Size of file (bytes)
 };
+
+#define INODE_FREE 0
+#define INODE_USED 1
 
 #define I_BUSY 0x1
 #define I_VALID 0x2
@@ -145,6 +152,8 @@ void generic_iunlock(struct inode*);
 void generic_stati(struct inode *ip, struct stat *st);
 int  generic_readi(struct inode *ip, char *dst, uint off, uint n);
 int  generic_dirlink(struct inode *dp, char *name, uint inum);
+
+int sb_set_blocksize(struct superblock *sb, int size);
 
 #endif /* XV6_VFS_H_ */
 

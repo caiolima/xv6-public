@@ -14,6 +14,7 @@
 #include "file.h"
 #include "buf.h"
 #include "vfs.h"
+#include "device.h"
 #include "vfsmount.h"
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
@@ -322,11 +323,11 @@ iget(uint dev, uint inum, int (*fill_inode)(struct inode *))
   ip->fs_t = fs_t;
   ip->iops = fs_t->iops;
 
+  release(&icache.lock);
+
   if (!fill_inode(ip)) {
     panic("Error on fill inode");
   }
-
-  release(&icache.lock);
 
   return ip;
 }
@@ -500,5 +501,15 @@ struct inode*
 nameiparent(char *path, char *name)
 {
   return namex(path, 1, name);
+}
+
+int
+sb_set_blocksize(struct superblock *sb, int size)
+{
+  /* If we get here, we know size is power of two
+   * and it's value is between 512 and PAGE_SIZE */
+  sb->blocksize = size;
+  sb->s_blocksize_bits = blksize_bits(size);
+  return sb->blocksize;
 }
 
