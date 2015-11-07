@@ -458,6 +458,8 @@ ext2_get_inode(struct superblock *sb, uint ino)
 
   offset &= (EXT2_BLOCK_SIZE(sb) - 1);
   memmove(&ei->i_ei, bp->data + offset, sizeof(ei->i_ei));
+  ext2_ops.brelse(bp);
+
   return ei;
 }
 
