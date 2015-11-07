@@ -207,6 +207,11 @@ struct ext2_inode {
   } osd2;   /* OS dependent 2 */
 };
 
+struct ext2_inode_info {
+  struct ext2_inode i_ei;
+  uint flags;
+};
+
 #define EXT2_ROOT_INO  2  /* Root inode */
 
 /*

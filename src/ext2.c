@@ -13,6 +13,30 @@
 
 static struct {
   struct spinlock lock;
+  struct ext2_inode_info ei[NINODE];
+} ext2_ei_pool; // It is a Pool of S5 Superblock Filesystems
+
+struct ext2_inode_info*
+alloc_ext2_inode_info()
+{
+  struct ext2_inode_info *ei;
+
+  acquire(&ext2_ei_pool.lock);
+  for (ei = &ext2_ei_pool.ei[0]; ei < &ext2_ei_pool.ei[NINODE]; ei++) {
+    if (ei->flags == I_FREE) {
+      ei->flags |= I_USED;
+      release(&ext2_ei_pool.lock);
+
+      return ei;
+    }
+  }
+  release(&ext2_ei_pool.lock);
+
+  return 0;
+}
+
+static struct {
+  struct spinlock lock;
   struct ext2_sb_info sb[MAXVFSSIZE];
 } ext2_sb_pool; // It is a Pool of S5 Superblock Filesystems
 
@@ -349,7 +373,7 @@ ext2_itrunc(struct inode *ip)
 void
 ext2_cleanup(struct inode *ip)
 {
-  panic("ext2 op not defined");
+  memset(ip->i_private, 0, sizeof(struct ext2_inode_info));
 }
 
 uint
@@ -399,16 +423,20 @@ ext2_namecmp(const char *s, const char *t)
   return 0;
 }
 
-static struct ext2_inode *
+static struct ext2_inode_info *
 ext2_get_inode(struct superblock *sb, uint ino)
 {
   struct buf * bp;
   unsigned long block_group;
   unsigned long block;
   unsigned long offset;
-  struct ext2_group_desc * gdp;
+  struct ext2_group_desc *gdp;
+  struct ext2_inode_info *ei;
 
-  cprintf("Started execute get inode\n");
+  ei = alloc_ext2_inode_info();
+
+  if (ei == 0)
+    panic("No memory to alloc ext2_inode");
 
   if ((ino != EXT2_ROOT_INO && ino < EXT2_FIRST_INO(sb)) ||
        ino > EXT2_SB(sb)->s_es->s_inodes_count)
@@ -429,7 +457,8 @@ ext2_get_inode(struct superblock *sb, uint ino)
     panic("Error on read the  block inode");
 
   offset &= (EXT2_BLOCK_SIZE(sb) - 1);
-  return (struct ext2_inode *) (bp->data + offset);
+  memmove(&ei->i_ei, bp->data + offset, sizeof(ei->i_ei));
+  return ei;
 }
 
 /**
@@ -437,13 +466,11 @@ ext2_get_inode(struct superblock *sb, uint ino)
  */
 int
 ext2_fill_inode(struct inode *ip) {
-  struct ext2_inode *ext2ip;
+  struct ext2_inode_info *ei;
 
-  ext2ip = ext2_get_inode(&sb[ip->dev], ip->inum);
+  ei = ext2_get_inode(&sb[ip->dev], ip->inum);
 
-  ip->i_private = ext2ip;
-
-  cprintf("Debug root ext2 first block addr: %d, user_id: %d\n", ext2ip->i_block[0], ext2ip->i_uid);
+  ip->i_private = ei;
 
   return 1;
 }
