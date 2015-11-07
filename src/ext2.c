@@ -23,8 +23,8 @@ alloc_ext2_inode_info()
 
   acquire(&ext2_ei_pool.lock);
   for (ei = &ext2_ei_pool.ei[0]; ei < &ext2_ei_pool.ei[NINODE]; ei++) {
-    if (ei->flags == I_FREE) {
-      ei->flags |= I_USED;
+    if (ei->flags == INODE_FREE) {
+      ei->flags |= INODE_USED;
       release(&ext2_ei_pool.lock);
 
       return ei;

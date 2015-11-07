@@ -28,8 +28,6 @@ struct superblock {
 
 #define SB_FREE 0
 #define SB_USED 1
-#define I_FREE 0
-#define I_USED 1
 
 struct inode_operations {
   struct inode* (*dirlookup)(struct inode *dp, char *name, uint *off);
