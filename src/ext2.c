@@ -84,9 +84,9 @@ struct inode_operations ext2_iops = {
   .ilock      = &ext2_ilock,
   .iunlock    = &generic_iunlock,
   .stati      = &generic_stati,
-  .readi      = &ext2_readi,
+  .readi      = &generic_readi,
   .writei     = &ext2_writei,
-  .dirlink    = &generic_dirlink,
+  .dirlink    = &ext2_dirlink,
   .unlink     = &ext2_unlink,
   .isdirempty = &ext2_isdirempty
 };
@@ -114,13 +114,40 @@ ext2fs_init(void)
 int
 ext2_mount(struct inode *devi, struct inode *ip)
 {
-  /* struct mntentry *mp; */
+  struct mntentry *mp;
 
   // Read the Superblock
   ext2_ops.readsb(devi->minor, &sb[devi->minor]);
 
   // Read the root device
-  ext2_ops.getroot(devi->major, devi->minor);
+  struct inode *devrtip = ext2_ops.getroot(devi->major, devi->minor);
+
+  acquire(&mtable.lock);
+  for (mp = &mtable.mpoint[0]; mp < &mtable.mpoint[MOUNTSIZE]; mp++) {
+    // This slot is available
+    if (mp->flag == 0) {
+found_slot:
+      mp->dev = devi->minor;
+      mp->m_inode = ip;
+      mp->pdata = &sb[devi->minor];
+      mp->flag |= M_USED;
+      mp->m_rtinode = devrtip;
+
+      release(&mtable.lock);
+
+      return 0;
+    } else {
+      // The disk is already mounted
+      if (mp->dev == devi->minor) {
+        release(&mtable.lock);
+        return -1;
+      }
+
+      if (ip->dev == mp->m_inode->dev && ip->inum == mp->m_inode->inum)
+        goto found_slot;
+    }
+  }
+  release(&mtable.lock);
 
   return -1;
 }
@@ -353,7 +380,22 @@ ext2_bfree(int dev, uint b)
 struct inode*
 ext2_dirlookup(struct inode *dp, char *name, uint *poff)
 {
-  panic("ext2 op not defined");
+  uint off, inum;
+  struct ext2_dir_entry_2 de;
+
+  for(off = 0; off < dp->size; off += sizeof(de)){
+    if(ext2_iops.readi(dp, (char*)&de, off, sizeof(de)) != sizeof(de))
+      panic("dirlink read");
+    if(de.inode == 0)
+      continue;
+    if(ext2_ops.namecmp(name, de.name) == 0){
+      // entry matches path element
+      if(poff)
+        *poff = off;
+      inum = de.inode;
+      return ext2_iget(dp->dev, inum);
+    }
+  }
 
   return 0;
 }
@@ -389,14 +431,14 @@ ext2_ilock(struct inode *ip)
 }
 
 int
-ext2_readi(struct inode *ip, char *dst, uint off, uint n)
+ext2_writei(struct inode *ip, char *src, uint off, uint n)
 {
   panic("ext2 op not defined");
   return 0;
 }
 
 int
-ext2_writei(struct inode *ip, char *src, uint off, uint n)
+ext2_dirlink(struct inode *dp, char *name, uint inum)
 {
   panic("ext2 op not defined");
   return 0;
@@ -474,6 +516,19 @@ ext2_fill_inode(struct inode *ip) {
 
   ip->i_private = ei;
 
+  // Translate the inode type to xv6 type
+  if (S_ISDIR(ei->i_ei.i_mode)) {
+    ip->type = T_DIR;
+  } else if (S_ISREG(ei->i_ei.i_mode)) {
+    ip->type = T_FILE;
+  } else if (S_ISCHR(ei->i_ei.i_mode) || S_ISBLK(ei->i_ei.i_mode)) {
+    ip->type = T_DEV;
+  } else {
+    panic("ext2: invalid file mode");
+  }
+
+  ip->nlink = ei->i_ei.i_links_count;
+  ip->size  = ei->i_ei.i_size;
   return 1;
 }
 

@@ -200,6 +200,32 @@ generic_dirlink(struct inode *dp, char *name, uint inum)
   return 0;
 }
 
+int
+generic_readi(struct inode *ip, char *dst, uint off, uint n)
+{
+  uint tot, m;
+  struct buf *bp;
+
+  if(ip->type == T_DEV){
+    if(ip->major < 0 || ip->major >= NDEV || !devsw[ip->major].read)
+      return -1;
+    return devsw[ip->major].read(ip, dst, n);
+  }
+
+  if(off > ip->size || off + n < off)
+    return -1;
+  if(off + n > ip->size)
+    n = ip->size - off;
+
+  for(tot=0; tot<n; tot+=m, off+=m, dst+=m){
+    bp = ip->fs_t->ops->bread(ip->dev, ip->iops->bmap(ip, off/sb[ip->dev].blocksize));
+    m = min(n - tot, sb[ip->dev].blocksize - off % sb[ip->dev].blocksize);
+    memmove(dst, bp->data + off % sb[ip->dev].blocksize, m);
+    ip->fs_t->ops->brelse(bp);
+  }
+  return n;
+}
+
 // Inodes.
 //
 // An inode describes a single unnamed file.
