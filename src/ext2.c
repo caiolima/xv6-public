@@ -11,6 +11,27 @@
 #include "vfsmount.h"
 #include "ext2.h"
 
+typedef struct {
+  uint32 *p;
+  uint32 key;
+  struct buf *bh;
+} Indirect;
+
+static inline void
+add_chain(Indirect *p, struct buf *bh, uint32 *v)
+{
+  p->key = *(p->p = v);
+  p->bh = bh;
+}
+
+static inline int verify_chain(Indirect *from, Indirect *to)
+{
+  while (from <= to && from->key == *from->p)
+    from++;
+  return (from > to);
+}
+
+
 static struct {
   struct spinlock lock;
   struct ext2_inode_info ei[NINODE];
@@ -155,7 +176,7 @@ found_slot:
 int
 ext2_unmount(struct inode *devi)
 {
-  panic("ext2 op not defined");
+  panic("ext2 unmount op not defined");
   return 0;
 }
 
@@ -356,45 +377,58 @@ ext2_readsb(int dev, struct superblock *sb)
 struct inode*
 ext2_ialloc(uint dev, short type)
 {
-  panic("ext2 op not defined");
+  panic("ext2 ialloc op not defined");
 }
 
 uint
 ext2_balloc(uint dev)
 {
-  panic("ext2 op not defined");
+  panic("ext2 balloc op not defined");
 }
 
 void
 ext2_bzero(int dev, int bno)
 {
-  panic("ext2 op not defined");
+  panic("ext2 bzero op not defined");
 }
 
 void
 ext2_bfree(int dev, uint b)
 {
-  panic("ext2 op not defined");
+  panic("ext2 bfree op not defined");
 }
 
 struct inode*
 ext2_dirlookup(struct inode *dp, char *name, uint *poff)
 {
-  uint off, inum;
-  struct ext2_dir_entry_2 de;
+  uint off, inum, currblk;
+  struct ext2_dir_entry_2 *de;
+  struct buf *bh;
+  int namelen = strlen(name);
 
-  for(off = 0; off < dp->size; off += sizeof(de)){
-    if(ext2_iops.readi(dp, (char*)&de, off, sizeof(de)) != sizeof(de))
-      panic("dirlink read");
-    if(de.inode == 0)
+  for (off = 0; off < dp->size;) {
+    currblk = off / sb[dp->dev].blocksize;
+
+    bh = ext2_ops.bread(dp->dev, ext2_iops.bmap(dp, currblk));
+
+    de = (struct ext2_dir_entry_2 *) (bh->data + (off % sb[dp->dev].blocksize));
+
+    if(de->inode == 0 || de->name_len != namelen) {
+      off += de->rec_len;
+      ext2_ops.brelse(bh);
       continue;
-    if(ext2_ops.namecmp(name, de.name) == 0){
+    }
+
+    if(strncmp(name, de->name, de->name_len) == 0){
       // entry matches path element
       if(poff)
         *poff = off;
-      inum = de.inode;
+      inum = de->inode;
+      ext2_ops.brelse(bh);
       return ext2_iget(dp->dev, inum);
     }
+    off += de->rec_len;
+    ext2_ops.brelse(bh);
   }
 
   return 0;
@@ -403,13 +437,13 @@ ext2_dirlookup(struct inode *dp, char *name, uint *poff)
 void
 ext2_iupdate(struct inode *ip)
 {
-  panic("ext2 op not defined");
+  panic("ext2 iupdate op not defined");
 }
 
 void
 ext2_itrunc(struct inode *ip)
 {
-  panic("ext2 op not defined");
+  panic("ext2 itrunc op not defined");
 }
 
 void
@@ -418,51 +452,208 @@ ext2_cleanup(struct inode *ip)
   memset(ip->i_private, 0, sizeof(struct ext2_inode_info));
 }
 
+/**
+ * ext2_block_to_path - parse the block number into array of offsets
+ * @inode: inode in question (we are only interested in its superblock)
+ * @i_block: block number to be parsed
+ * @offsets: array to store the offsets in
+ * @boundary: set this non-zero if the referred-to block is likely to be
+ *             followed (on disk) by an indirect block.
+ * To store the locations of file's data ext2 uses a data structure common
+ * for UNIX filesystems - tree of pointers anchored in the inode, with
+ * data blocks at leaves and indirect blocks in intermediate nodes.
+ * This function translates the block number into path in that tree -
+ * return value is the path length and @offsets[n] is the offset of
+ * pointer to (n+1)th node in the nth one. If @block is out of range
+ * (negative or too large) warning is printed and zero returned.
+ *
+ * Note: function doesn't find node addresses, so no IO is needed. All
+ * we need to know is the capacity of indirect blocks (taken from the
+ * superblock).
+ */
+
+/*
+ * Portability note: the last comparison (check that we fit into triple
+ * indirect block) is spelled differently, because otherwise on an
+ * architecture with 32-bit longs and 8Kb pages we might get into trouble
+ * if our filesystem had 8Kb blocks. We might use long long, but that would
+ * kill us on x86. Oh, well, at least the sign propagation does not matter -
+ * i_block would have to be negative in the very beginning, so we would not
+ * get there at all.
+ */
+
+static int
+ext2_block_to_path(struct inode *inode,
+                   long i_block, int offsets[4])
+{
+  int ptrs = EXT2_ADDR_PER_BLOCK(&sb[inode->dev]);
+  int ptrs_bits = EXT2_ADDR_PER_BLOCK_BITS(&sb[inode->dev]);
+  const long direct_blocks = EXT2_NDIR_BLOCKS,
+        indirect_blocks = ptrs,
+        double_blocks = (1 << (ptrs_bits * 2));
+  int n = 0;
+
+  if (i_block < 0) {
+    panic("block_to_path invalid block num");
+  } else if (i_block < direct_blocks) {
+    offsets[n++] = i_block;
+  } else if ((i_block -= direct_blocks) < indirect_blocks) {
+    offsets[n++] = EXT2_IND_BLOCK;
+    offsets[n++] = i_block;
+  } else if ((i_block -= indirect_blocks) < double_blocks) {
+    offsets[n++] = EXT2_DIND_BLOCK;
+    offsets[n++] = i_block >> ptrs_bits;
+    offsets[n++] = i_block & (ptrs - 1);
+  } else if (((i_block -= double_blocks) >> (ptrs_bits * 2)) < ptrs) {
+    offsets[n++] = EXT2_TIND_BLOCK;
+    offsets[n++] = i_block >> (ptrs_bits * 2);
+    offsets[n++] = (i_block >> ptrs_bits) & (ptrs - 1);
+    offsets[n++] = i_block & (ptrs - 1);
+  } else {
+    panic("This block is out of bounds from this ext2 fs");
+  }
+
+  return n;
+}
+
+/**
+ * ext2_get_branch - read the chain of indirect blocks leading to data
+ * @inode: inode in question
+ * @depth: depth of the chain (1 - direct pointer, etc.)
+ * @offsets: offsets of pointers in inode/indirect blocks
+ * @chain: place to store the result
+ * @err: here we store the error value
+ *
+ * Function fills the array of triples <key, p, bh> and returns %NULL
+ * if everything went OK or the pointer to the last filled triple
+ * (incomplete one) otherwise. Upon the return chain[i].key contains
+ * the number of (i+1)-th block in the chain (as it is stored in memory,
+ * i.e. little-endian 32-bit), chain[i].p contains the address of that
+ * number (it points into struct inode for i==0 and into the bh->b_data
+ * for i>0) and chain[i].bh points to the buffer_head of i-th indirect
+ * block for i>0 and NULL for i==0. In other words, it holds the block
+ * numbers of the chain, addresses they were taken from (and where we can
+ * verify that chain did not change) and buffer_heads hosting these
+ * numbers.
+ *
+ * Function stops when it stumbles upon zero pointer (absent block)
+ *  (pointer to last triple returned, *@err == 0)
+ * or when it gets an IO error reading an indirect block
+ *  (ditto, *@err == -EIO)
+ * or when it notices that chain had been changed while it was reading
+ *  (ditto, *@err == -EAGAIN)
+ * or when it reads all @depth-1 indirect blocks successfully and finds
+ * the whole chain, all way to the data (returns %NULL, *err == 0).
+ */
+static Indirect *ext2_get_branch(struct inode *inode,
+                                 int depth,
+                                 int *offsets,
+                                 Indirect chain[4])
+{
+  Indirect *p = chain;
+  struct buf *bh;
+  struct ext2_inode_info *ei = inode->i_private;
+
+  add_chain (chain, 0, ei->i_ei.i_block + *offsets);
+  if (!p->key)
+    goto no_block;
+  while (--depth) {
+    bh = ext2_ops.bread(inode->dev, p->key);
+    if (!bh)
+      panic("error on ext2_get_branch");
+    if (!verify_chain(chain, p))
+      panic("ext2_get_branch chain changed");
+    add_chain(++p, bh, (uint32*)bh->data + *++offsets);
+    if (!p->key)
+      goto no_block;
+  }
+  return 0;
+
+no_block:
+  return p;
+}
+
 uint
 ext2_bmap(struct inode *ip, uint bn)
 {
-  panic("ext2 op not defined");
+  /* struct buf *bp; */
+  int depth;
+  Indirect chain[4];
+  Indirect *partial;
+  int offsets[4];
+  uint blkn;
+
+  depth = ext2_block_to_path(ip,bn,offsets);
+
+  if (depth == 0)
+    panic("Wrong depth value");
+
+  partial = ext2_get_branch(ip, depth, offsets, chain);
+
+  if (!partial) {
+    goto got_it;
+  }
+
+got_it:
+  blkn = chain[depth-1].key;
+  /* Clean up and exit */
+  partial = chain + depth - 1;  /* the whole chain */
+/* cleanup: */
+  while (partial > chain) {
+    brelse(partial->bh);
+    partial--;
+  }
+
+  return blkn;
 }
 
 void
 ext2_ilock(struct inode *ip)
 {
-  panic("ext2 op not defined");
+  if(ip == 0 || ip->ref < 1)
+    panic("ilock");
+
+  acquire(&icache.lock);
+  while (ip->flags & I_BUSY)
+    sleep(ip, &icache.lock);
+  ip->flags |= I_BUSY;
+  release(&icache.lock);
+
+  // TODO Here
 }
 
 int
 ext2_writei(struct inode *ip, char *src, uint off, uint n)
 {
-  panic("ext2 op not defined");
+  panic("ext2 writei op not defined");
   return 0;
 }
 
 int
 ext2_dirlink(struct inode *dp, char *name, uint inum)
 {
-  panic("ext2 op not defined");
+  panic("ext2 dirlink op not defined");
   return 0;
 }
 
 int
 ext2_isdirempty(struct inode *dp)
 {
-  panic("ext2 op not defined");
+  panic("ext2 isdirempty op not defined");
   return 1;
 }
 
 int
 ext2_unlink(struct inode *dp, uint off)
 {
-  panic("ext2 op not defined");
+  panic("ext2 unlink op not defined");
   return 0;
 }
 
 int
 ext2_namecmp(const char *s, const char *t)
 {
-  panic("ext2 op not defined");
-  return 0;
+  return strncmp(s, t, EXT2_NAME_LEN);
 }
 
 static struct ext2_inode_info *
@@ -495,6 +686,7 @@ ext2_get_inode(struct superblock *sb, uint ino)
   offset = ((ino - 1) % EXT2_INODES_PER_GROUP(sb)) * EXT2_INODE_SIZE(sb);
   block = gdp->bg_inode_table +
     (offset >> EXT2_BLOCK_SIZE_BITS(sb));
+
   if (!(bp = ext2_ops.bread(sb->minor, block)))
     panic("Error on read the  block inode");
 

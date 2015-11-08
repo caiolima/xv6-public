@@ -223,6 +223,7 @@ generic_readi(struct inode *ip, char *dst, uint off, uint n)
     memmove(dst, bp->data + off % sb[ip->dev].blocksize, m);
     ip->fs_t->ops->brelse(bp);
   }
+
   return n;
 }
 
