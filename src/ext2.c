@@ -11,6 +11,8 @@
 #include "vfsmount.h"
 #include "ext2.h"
 
+#define in_range(b, first, len) ((b) >= (first) && (b) <= (first) + (len) - 1)
+
 typedef struct {
   uint32 *p;
   uint32 key;
@@ -484,7 +486,7 @@ ext2_cleanup(struct inode *ip)
 
 static int
 ext2_block_to_path(struct inode *inode,
-                   long i_block, int offsets[4])
+                   long i_block, int offsets[4], int *boundary)
 {
   int ptrs = EXT2_ADDR_PER_BLOCK(&sb[inode->dev]);
   int ptrs_bits = EXT2_ADDR_PER_BLOCK_BITS(&sb[inode->dev]);
@@ -492,26 +494,34 @@ ext2_block_to_path(struct inode *inode,
         indirect_blocks = ptrs,
         double_blocks = (1 << (ptrs_bits * 2));
   int n = 0;
+  int final = 0;
 
   if (i_block < 0) {
     panic("block_to_path invalid block num");
   } else if (i_block < direct_blocks) {
     offsets[n++] = i_block;
+    final = direct_blocks;
   } else if ((i_block -= direct_blocks) < indirect_blocks) {
     offsets[n++] = EXT2_IND_BLOCK;
     offsets[n++] = i_block;
+    final = ptrs;
   } else if ((i_block -= indirect_blocks) < double_blocks) {
     offsets[n++] = EXT2_DIND_BLOCK;
     offsets[n++] = i_block >> ptrs_bits;
     offsets[n++] = i_block & (ptrs - 1);
+    final = ptrs;
   } else if (((i_block -= double_blocks) >> (ptrs_bits * 2)) < ptrs) {
     offsets[n++] = EXT2_TIND_BLOCK;
     offsets[n++] = i_block >> (ptrs_bits * 2);
     offsets[n++] = (i_block >> ptrs_bits) & (ptrs - 1);
     offsets[n++] = i_block & (ptrs - 1);
+    final = ptrs;
   } else {
     panic("This block is out of bounds from this ext2 fs");
   }
+
+  if (boundary)
+    *boundary = final - 1 - (i_block & (ptrs - 1));
 
   return n;
 }
@@ -573,6 +583,512 @@ no_block:
   return p;
 }
 
+/**
+ * ext2_find_near - find a place for allocation with sufficient locality
+ * @inode: owner
+ * @ind: descriptor of indirect block.
+ *
+ * This function returns the preferred place for block allocation.
+ * It is used when heuristic for sequential allocation fails.
+ * Rules are:
+ *   + if there is a block to the left of our position - allocate near it.
+ *   + if pointer will live in indirect block - allocate near that block.
+ *   + if pointer will live in inode - allocate in the same cylinder group.
+ *
+ * In the latter case we colour the starting block by the callers PID to
+ * prevent it from clashing with concurrent allocations for a different inode
+ * in the same block group.   The PID is used here so that functionally related
+ * files will be close-by on-disk.
+ *
+ * Caller must make sure that @ind is valid and will stay that way.
+ */
+
+static ext2_fsblk_t ext2_find_near(struct inode *inode, Indirect *ind)
+{
+  struct ext2_inode_info *ei = inode->i_private;
+  uint32 *start = ind->bh ? (uint32 *) ind->bh->data : ei->i_ei.i_block;
+  uint32 *p;
+  ext2_fsblk_t bg_start;
+  ext2_fsblk_t colour;
+  ext2_grpblk_t i_block_group;
+
+  /* Try to find previous block */
+  for (p = ind->p - 1; p >= start; p--)
+    if (*p)
+      return *p;
+
+  /* No such thing, so let's try location of indirect block */
+  if (ind->bh)
+    return ind->bh->blockno;
+
+  /*
+   * It is going to be referred from inode itself? OK, just put it into
+   * the same cylinder group then.
+   */
+  i_block_group = (inode->inum - 1) / EXT2_INODES_PER_GROUP(&sb[inode->dev]);
+  bg_start = ext2_group_first_block_no(&sb[inode->dev], i_block_group);
+  colour = (proc->pid % 16) *
+    (EXT2_BLOCKS_PER_GROUP(&sb[inode->dev]) / 16);
+  return bg_start + colour;
+}
+
+static inline ext2_fsblk_t ext2_find_goal(struct inode *inode, long block,
+    Indirect *partial)
+{
+  return ext2_find_near(inode, partial);
+}
+
+/**
+ * ext2_blks_to_allocate: Look up the block map and count the number
+ * of direct blocks need to be allocated for the given branch.
+ *
+ * @branch: chain of indirect blocks
+ * @k: number of blocks need for indirect blocks
+ * @blks: number of data blocks to be mapped.
+ * @blocks_to_boundary:  the offset in the indirect block
+ *
+ * return the total number of blocks to be allocate, including the
+ * direct and indirect blocks.
+ */
+static int
+ext2_blks_to_allocate(Indirect * branch, int k, unsigned long blks,
+                      int blocks_to_boundary)
+{
+  unsigned long count = 0;
+
+  /*
+   * Simple case, [t,d]Indirect block(s) has not allocated yet
+   * then it's clear blocks on that path have not allocated
+   */
+  if (k > 0) {
+    /* right now don't hanel cross boundary allocation */
+    if (blks < blocks_to_boundary + 1)
+      count += blks;
+    else
+      count += blocks_to_boundary + 1;
+    return count;
+  }
+
+  count++;
+  while (count < blks && count <= blocks_to_boundary
+      && *(branch[0].p + count) == 0) {
+    count++;
+  }
+  return count;
+}
+
+/*
+ * Read the bitmap for a given block_group,and validate the
+ * bits for block/inode/inode tables are set in the bitmaps
+ *
+ * Return buffer_head on success or NULL in case of failure.
+ */
+static struct buf *
+read_block_bitmap(struct superblock *sb, unsigned int block_group)
+{
+  struct ext2_group_desc * desc;
+  struct buf * bh;
+  ext2_fsblk_t bitmap_blk;
+
+  desc = ext2_get_group_desc(sb, block_group, 0);
+  if (!desc)
+    return 0;
+  bitmap_blk = desc->bg_block_bitmap;
+  bh = ext2_ops.bread(sb->minor, bitmap_blk);
+  if (!bh) {
+    return 0;
+  }
+
+  /* ext2_valid_block_bitmap(sb, desc, block_group, bh); */
+  /*
+   * file system mounted not to panic on error, continue with corrupt
+   * bitmap
+   */
+  return bh;
+}
+
+/**
+ * ext2_try_to_allocate()
+ * @sb:   superblock
+ * @group:  given allocation block group
+ * @bitmap_bh:  bufferhead holds the block bitmap
+ * @grp_goal:  given target block within the group
+ * @count:  target number of blocks to allocate
+ * @my_rsv:  reservation window
+ *
+ * Attempt to allocate blocks within a give range. Set the range of allocation
+ * first, then find the first free bit(s) from the bitmap (within the range),
+ * and at last, allocate the blocks by claiming the found free bit as allocated.
+ *
+ * To set the range of this allocation:
+ *  if there is a reservation window, only try to allocate block(s)
+ *  from the file's own reservation window;
+ *  Otherwise, the allocation range starts from the give goal block,
+ *  ends at the block group's last block.
+ *
+ * If we failed to allocate the desired block then we may end up crossing to a
+ * new bitmap.
+ */
+static int
+ext2_try_to_allocate(struct superblock *sb, int group,
+    struct buf *bitmap_bh, ext2_grpblk_t grp_goal,
+    unsigned long *count)
+{
+  ext2_fsblk_t group_first_block;
+  ext2_grpblk_t start, end;
+  unsigned long num = 0;
+
+  if (grp_goal > 0)
+    start = grp_goal;
+  else
+    start = 0;
+  end = EXT2_BLOCKS_PER_GROUP(sb);
+
+repeat:
+  if (grp_goal < 0) {
+    grp_goal = find_next_usable_block(start, bitmap_bh, end);
+    if (grp_goal < 0)
+      goto fail_access;
+
+    int i;
+
+    for (i = 0; i < 7 && grp_goal > start &&
+        !ext2_test_bit(grp_goal - 1, bitmap_bh->data);
+        i++, grp_goal--)
+      ;
+  }
+  start = grp_goal;
+
+  if (ext2_set_bit_atomic(sb_bgl_lock(EXT2_SB(sb), group), grp_goal,
+                          bitmap_bh->data)) {
+    /*
+     * The block was allocated by another thread, or it was
+     * allocated and then freed by another thread
+     */
+    start++;
+    grp_goal++;
+    if (start >= end)
+      goto fail_access;
+    goto repeat;
+  }
+  num++;
+  grp_goal++;
+  while (num < *count && grp_goal < end &&
+         !ext2_set_bit_atomic(sb_bgl_lock(EXT2_SB(sb), group),
+                              grp_goal, bitmap_bh->data)) {
+    num++;
+    grp_goal++;
+  }
+  *count = num;
+  return grp_goal - num;
+fail_access:
+  *count = num;
+  return -1;
+}
+
+/*
+ * ext2_new_blocks() -- core block(s) allocation function
+ * @inode:  file inode
+ * @goal:  given target block(filesystem wide)
+ * @count:  target number of blocks to allocate
+ * @errp:  error code
+ *
+ * ext2_new_blocks uses a goal block to assist allocation.  If the goal is
+ * free, or there is a free block within 32 blocks of the goal, that block
+ * is allocated.  Otherwise a forward search is made for a free block; within 
+ * each block group the search first looks for an entire free byte in the block
+ * bitmap, and then for any free bit if that fails.
+ * This function also updates quota and i_blocks field.
+ */
+ext2_fsblk_t
+ext2_new_blocks(struct inode *inode, ext2_fsblk_t goal,
+                unsigned long *count, int *errp)
+{
+  struct buf *bitmap_bh = 0;
+  struct buf *gdp_bh;
+  int group_no;
+  int goal_group;
+  ext2_grpblk_t grp_target_blk; /* blockgroup relative goal block */
+  ext2_grpblk_t grp_alloc_blk; /* blockgroup-relative allocated block*/
+  ext2_fsblk_t ret_block;  /* filesyetem-wide allocated block */
+  int bgi;   /* blockgroup iteration index */
+  int performed_allocation = 0;
+  ext2_grpblk_t free_blocks; /* number of free blocks in a group */
+  struct superblock *sb;
+  struct ext2_group_desc *gdp;
+  struct ext2_superblock *es;
+  struct ext2_sb_info *sbi;
+  unsigned long ngroups;
+  unsigned long num = *count;
+  int ret;
+
+  *errp = -1;
+  sb = &sb[inode->dev];
+
+  sbi = EXT2_SB(sb);
+  es = sbi->s_es;
+
+  /* if (!ext2_has_free_blocks(sbi)) { */
+  /*   *errp = -ENOSPC; */
+  /*   goto out; */
+  /* } */
+
+  /*
+   * First, test whether the goal block is free.
+   */
+  if (goal < es->s_first_data_block ||
+      goal >= es->s_blocks_count) {
+    goal = es->s_first_data_block;
+  }
+
+  group_no = (goal - es->s_first_data_block) / EXT2_BLOCKS_PER_GROUP(sb);
+  goal_group = group_no;
+retry_alloc:
+  gdp = ext2_get_group_desc(sb, group_no, &gdp_bh);
+  if (!gdp)
+    goto io_error;
+
+  free_blocks = gdp->bg_free_blocks_count;
+
+  if (free_blocks > 0) {
+    grp_target_blk = ((goal - es->s_first_data_block) %
+                      EXT2_BLOCKS_PER_GROUP(sb));
+    bitmap_bh = read_block_bitmap(sb, group_no);
+    if (!bitmap_bh)
+      goto io_error;
+    grp_alloc_blk = ext2_try_to_allocate_with_rsv(sb, group_no,
+                                                  bitmap_bh, grp_target_blk,
+                                                  my_rsv, &num);
+    if (grp_alloc_blk >= 0)
+      goto allocated;
+  }
+
+  ngroups = EXT2_SB(sb)->s_groups_count;
+
+  /*
+   * Now search the rest of the groups.  We assume that
+   * group_no and gdp correctly point to the last group visited.
+   */
+  for (bgi = 0; bgi < ngroups; bgi++) {
+    group_no++;
+    if (group_no >= ngroups)
+      group_no = 0;
+    gdp = ext2_get_group_desc(sb, group_no, &gdp_bh);
+    if (!gdp)
+      goto io_error;
+
+    free_blocks = gdp->bg_free_blocks_count;
+    /*
+     * skip this group (and avoid loading bitmap) if there
+     * are no free blocks
+     */
+    if (!free_blocks)
+      continue;
+
+    ext2_ops.brelse(bitmap_bh);
+    bitmap_bh = read_block_bitmap(sb, group_no);
+    if (!bitmap_bh)
+      goto io_error;
+    /*
+     * try to allocate block(s) from this group, without a goal(-1).
+     */
+    grp_alloc_blk = ext2_try_to_allocate_with_rsv(sb, group_no,
+                                                  bitmap_bh, -1, my_rsv, &num);
+    if (grp_alloc_blk >= 0)
+      goto allocated;
+  }
+
+  goto out;
+
+allocated:
+
+  ret_block = grp_alloc_blk + ext2_group_first_block_no(sb, group_no);
+
+  if (in_range(gdp->bg_block_bitmap, ret_block, num) ||
+      in_range(gdp->bg_inode_bitmap, ret_block, num) ||
+      in_range(ret_block, gdp->bg_inode_table,
+               EXT2_SB(sb)->s_itb_per_group)         ||
+      in_range(ret_block + num - 1, gdp->bg_inode_table,
+               EXT2_SB(sb)->s_itb_per_group)) {
+    goto retry_alloc;
+  }
+
+  performed_allocation = 1;
+
+  if (ret_block + num - 1 >= es->s_blocks_count) {
+    panic("Error on ext2 block alloc");
+  }
+
+  group_adjust_blocks(sb, group_no, gdp, gdp_bh, -num);
+
+  ext2_ops.bwrite(bitmap_bh);
+
+  *errp = 0;
+  ext2_ops.brelse(bitmap_bh);
+  /* if (num < *count) { */
+  /*   dquot_free_block_nodirty(inode, *count-num); */
+  /*   mark_inode_dirty(inode); */
+  /*   *count = num; */
+  /* } */
+  return ret_block;
+
+io_error:
+  *errp = -2;
+out:
+  /*
+   * Undo the block allocation
+   */
+  /* if (!performed_allocation) { */
+  /*   dquot_free_block_nodirty(inode, *count); */
+  /*   mark_inode_dirty(inode); */
+  /* } */
+  ext2_ops.brelse(bitmap_bh);
+  return 0;
+}
+
+/**
+ * ext2_alloc_blocks: multiple allocate blocks needed for a branch
+ * @indirect_blks: the number of blocks need to allocate for indirect
+ *   blocks
+ *
+ * @new_blocks: on return it will store the new block numbers for
+ * the indirect blocks(if needed) and the first direct block,
+ * @blks: on return it will store the total number of allocated
+ *  direct blocks
+ */
+static int
+ext2_alloc_blocks(struct inode *inode,
+                  ext2_fsblk_t goal, int indirect_blks, int blks,
+                  ext2_fsblk_t new_blocks[4], int *err)
+{
+  int target, i;
+  unsigned long count = 0;
+  int index = 0;
+  ext2_fsblk_t current_block = 0;
+  int ret = 0;
+
+  /*
+   * Here we try to allocate the requested multiple blocks at once,
+   * on a best-effort basis.
+   * To build a branch, we should allocate blocks for
+   * the indirect blocks(if not allocated yet), and at least
+   * the first direct block of this branch.  That's the
+   * minimum number of blocks need to allocate(required)
+   */
+  target = blks + indirect_blks;
+
+  while (1) {
+    count = target;
+    /* allocating blocks for indirect blocks and direct blocks */
+    current_block = ext2_new_blocks(inode,goal,&count,err);
+    if (*err)
+      goto failed_out;
+
+    target -= count;
+    /* allocate blocks for indirect blocks */
+    while (index < indirect_blks && count) {
+      new_blocks[index++] = current_block++;
+      count--;
+    }
+
+    if (count > 0)
+      break;
+  }
+
+  /* save the new block number for the first direct block */
+  new_blocks[index] = current_block;
+
+  /* total number of blocks allocated for direct blocks */
+  ret = count;
+  *err = 0;
+  return ret;
+failed_out:
+  panic("ext2 error on ext2_alloc_blocks");
+  return ret;
+}
+
+/**
+ * ext2_alloc_branch - allocate and set up a chain of blocks.
+ * @inode: owner
+ * @num: depth of the chain (number of blocks to allocate)
+ * @offsets: offsets (in the blocks) to store the pointers to next.
+ * @branch: place to store the chain in.
+ *
+ * This function allocates @num blocks, zeroes out all but the last one,
+ * links them into chain and (if we are synchronous) writes them to disk.
+ * In other words, it prepares a branch that can be spliced onto the
+ * inode. It stores the information about that chain in the branch[], in
+ * the same format as ext2_get_branch() would do. We are calling it after
+ * we had read the existing part of chain and partial points to the last
+ * triple of that (one with zero ->key). Upon the exit we have the same
+ * picture as after the successful ext2_get_block(), except that in one
+ * place chain is disconnected - *branch->p is still zero (we did not
+ * set the last link), but branch->key contains the number that should
+ * be placed into *branch->p to fill that gap.
+ *
+ * If allocation fails we free all blocks we've allocated (and forget
+ * their buffer_heads) and return the error value the from failed
+ * ext2_alloc_block() (normally -ENOSPC). Otherwise we set the chain
+ * as described above and return 0.
+ */
+
+static int
+ext2_alloc_branch(struct inode *inode,
+                  int indirect_blks, int *blks, ext2_fsblk_t goal,
+                  int *offsets, Indirect *branch)
+{
+  int blocksize = sb[inode->dev].blocksize;
+  int i, n = 0;
+  int err = 0;
+  struct buf *bh;
+  int num;
+  ext2_fsblk_t new_blocks[4];
+  ext2_fsblk_t current_block;
+
+  num = ext2_alloc_blocks(inode, goal, indirect_blks,
+      *blks, new_blocks, &err);
+  if (err)
+    return err;
+
+  branch[0].key = new_blocks[0];
+  /*
+   * metadata blocks and data blocks are allocated.
+   */
+  for (n = 1; n <= indirect_blks;  n++) {
+    /*
+     * Get buffer_head for parent block, zero it out
+     * and set the pointer to new one, then send
+     * parent to disk.
+     */
+    bh = ext2_ops.bread(inode->dev, new_blocks[n-1]);
+    if (!bh) {
+      goto failed;
+    }
+    branch[n].bh = bh;
+    memset(bh->data, 0, blocksize);
+    branch[n].p = (uint32 *) bh->data + offsets[n];
+    branch[n].key = new_blocks[n];
+    *branch[n].p = branch[n].key;
+    if ( n == indirect_blks) {
+      current_block = new_blocks[n];
+      /*
+       * End of chain, update the last new metablock of
+       * the chain to point to the new allocated
+       * data blocks numbers
+       */
+      for (i=1; i < num; i++)
+        *(branch[n].p + i) = ++current_block;
+    }
+    ext2_ops.bwrite(bh);
+  }
+  *blks = num;
+  return err;
+
+failed:
+  panic("ext2 error on allocate blocks branch");
+  return err;
+}
+
 uint
 ext2_bmap(struct inode *ip, uint bn)
 {
@@ -581,9 +1097,15 @@ ext2_bmap(struct inode *ip, uint bn)
   Indirect chain[4];
   Indirect *partial;
   int offsets[4];
+  int indirect_blks;
   uint blkn;
+  int blocks_to_boundary;
+  ext2_fsblk_t goal;
+  int count;
+  unsigned long maxblocks;
+  int err;
 
-  depth = ext2_block_to_path(ip,bn,offsets);
+  depth = ext2_block_to_path(ip, bn, offsets, &blocks_to_boundary);
 
   if (depth == 0)
     panic("Wrong depth value");
@@ -593,6 +1115,25 @@ ext2_bmap(struct inode *ip, uint bn)
   if (!partial) {
     goto got_it;
   }
+
+  maxblocks = sb[ip->dev].blocksize >> EXT2_BLOCK_SIZE_BITS(&sb[ip->dev]);
+
+  // The requested block is not allocated yet
+  goal = ext2_find_goal(ip, bn, partial);
+
+  /* the number of blocks need to allocate for [d,t]indirect blocks */
+  indirect_blks = (chain + depth) - partial - 1;
+
+  indirect_blks = (chain + depth) - partial - 1;
+  /*
+   * Next look up the indirect map to count the totoal number of
+   * direct blocks to allocate for this branch.
+   */
+  count = ext2_blks_to_allocate(partial, indirect_blks,
+      maxblocks, blocks_to_boundary);
+
+  err = ext2_alloc_branch(ip, indirect_blks, &count, goal,
+      offsets + (partial - chain), partial);
 
 got_it:
   blkn = chain[depth-1].key;
