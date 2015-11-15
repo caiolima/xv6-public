@@ -10,8 +10,12 @@
 #include "file.h"
 #include "vfsmount.h"
 #include "ext2.h"
+#include "find_bits.h"
 
 #define in_range(b, first, len) ((b) >= (first) && (b) <= (first) + (len) - 1)
+#define ext2_find_next_zero_bit find_next_zero_bit
+#define ext2_test_bit test_bit
+#define ext2_set_bit_atomic test_and_set_bit
 
 typedef struct {
   uint32 *p;
@@ -708,6 +712,77 @@ read_block_bitmap(struct superblock *sb, unsigned int block_group)
 }
 
 /**
+ * bitmap_search_next_usable_block()
+ * @start:  the starting block (group relative) of the search
+ * @bh:   bufferhead contains the block group bitmap
+ * @maxblocks:  the ending block (group relative) of the reservation
+ *
+ * The bitmap search --- search forward through the actual bitmap on disk until
+ * we find a bit free.
+ */
+static ext2_grpblk_t
+bitmap_search_next_usable_block(ext2_grpblk_t start, struct buf *bh,
+                                ext2_grpblk_t maxblocks)
+{
+  ext2_grpblk_t next;
+
+  next = ext2_find_next_zero_bit((unsigned long *)bh->data, maxblocks, start);
+  if (next >= maxblocks)
+    return -1;
+  return next;
+}
+
+/**
+ * find_next_usable_block()
+ * @start:  the starting block (group relative) to find next
+ *    allocatable block in bitmap.
+ * @bh:   bufferhead contains the block group bitmap
+ * @maxblocks:  the ending block (group relative) for the search
+ *
+ * Find an allocatable block in a bitmap.  We perform the "most
+ * appropriate allocation" algorithm of looking for a free block near
+ * the initial goal; then for a free byte somewhere in the bitmap;
+ * then for any free bit in the bitmap.
+ */
+static ext2_grpblk_t
+find_next_usable_block(int start, struct buf *bh, int maxblocks)
+{
+  ext2_grpblk_t here, next;
+  char *p, *r;
+
+  if (start > 0) {
+    /*
+     * The goal was occupied; search forward for a free
+     * block within the next XX blocks.
+     *
+     * end_goal is more or less random, but it has to be
+     * less than EXT2_BLOCKS_PER_GROUP. Aligning up to the
+     * next 64-bit boundary is simple..
+     */
+    ext2_grpblk_t end_goal = (start + 63) & ~63;
+    if (end_goal > maxblocks)
+      end_goal = maxblocks;
+    here = ext2_find_next_zero_bit((unsigned long *)bh->data, end_goal, start);
+    if (here < end_goal)
+      return here;
+  }
+
+  here = start;
+  if (here < 0)
+    here = 0;
+
+  p = ((char *)bh->data) + (here >> 3);
+  r = memscan(p, 0, ((maxblocks + 7) >> 3) - (here >> 3));
+  next = (r - ((char *)bh->data)) << 3;
+
+  if (next < maxblocks && next >= here)
+    return next;
+
+  here = bitmap_search_next_usable_block(here, bh, maxblocks);
+  return here;
+}
+
+/**
  * ext2_try_to_allocate()
  * @sb:   superblock
  * @group:  given allocation block group
@@ -734,7 +809,6 @@ ext2_try_to_allocate(struct superblock *sb, int group,
     struct buf *bitmap_bh, ext2_grpblk_t grp_goal,
     unsigned long *count)
 {
-  ext2_fsblk_t group_first_block;
   ext2_grpblk_t start, end;
   unsigned long num = 0;
 
@@ -753,14 +827,14 @@ repeat:
     int i;
 
     for (i = 0; i < 7 && grp_goal > start &&
-        !ext2_test_bit(grp_goal - 1, bitmap_bh->data);
+        !ext2_test_bit(grp_goal - 1, (unsigned long *)bitmap_bh->data);
         i++, grp_goal--)
       ;
   }
   start = grp_goal;
 
-  if (ext2_set_bit_atomic(sb_bgl_lock(EXT2_SB(sb), group), grp_goal,
-                          bitmap_bh->data)) {
+  if (ext2_set_bit_atomic(grp_goal,
+                          (unsigned long *)bitmap_bh->data)) {
     /*
      * The block was allocated by another thread, or it was
      * allocated and then freed by another thread
@@ -774,8 +848,7 @@ repeat:
   num++;
   grp_goal++;
   while (num < *count && grp_goal < end &&
-         !ext2_set_bit_atomic(sb_bgl_lock(EXT2_SB(sb), group),
-                              grp_goal, bitmap_bh->data)) {
+         !ext2_set_bit_atomic(grp_goal, (unsigned long*)bitmap_bh->data)) {
     num++;
     grp_goal++;
   }
@@ -784,6 +857,23 @@ repeat:
 fail_access:
   *count = num;
   return -1;
+}
+
+static void
+group_adjust_blocks(struct superblock *sb, int group_no,
+                    struct ext2_group_desc *desc, struct buf *bh,
+                    int count)
+{
+  if (count) {
+    /* struct ext2_sb_info *sbi = EXT2_SB(sb); */
+    unsigned free_blocks;
+
+    /* spin_lock(sb_bgl_lock(sbi, group_no)); */
+    free_blocks = desc->bg_free_blocks_count;
+    desc->bg_free_blocks_count = free_blocks + count;
+    /* spin_unlock(sb_bgl_lock(sbi, group_no)); */
+    ext2_ops.bwrite(bh);
+  }
 }
 
 /*
@@ -807,25 +897,22 @@ ext2_new_blocks(struct inode *inode, ext2_fsblk_t goal,
   struct buf *bitmap_bh = 0;
   struct buf *gdp_bh;
   int group_no;
-  int goal_group;
   ext2_grpblk_t grp_target_blk; /* blockgroup relative goal block */
   ext2_grpblk_t grp_alloc_blk; /* blockgroup-relative allocated block*/
   ext2_fsblk_t ret_block;  /* filesyetem-wide allocated block */
   int bgi;   /* blockgroup iteration index */
-  int performed_allocation = 0;
   ext2_grpblk_t free_blocks; /* number of free blocks in a group */
-  struct superblock *sb;
+  struct superblock *superb;
   struct ext2_group_desc *gdp;
   struct ext2_superblock *es;
   struct ext2_sb_info *sbi;
   unsigned long ngroups;
   unsigned long num = *count;
-  int ret;
 
   *errp = -1;
-  sb = &sb[inode->dev];
+  superb = &sb[inode->dev];
 
-  sbi = EXT2_SB(sb);
+  sbi = EXT2_SB(superb);
   es = sbi->s_es;
 
   /* if (!ext2_has_free_blocks(sbi)) { */
@@ -841,10 +928,9 @@ ext2_new_blocks(struct inode *inode, ext2_fsblk_t goal,
     goal = es->s_first_data_block;
   }
 
-  group_no = (goal - es->s_first_data_block) / EXT2_BLOCKS_PER_GROUP(sb);
-  goal_group = group_no;
+  group_no = (goal - es->s_first_data_block) / EXT2_BLOCKS_PER_GROUP(superb);
 retry_alloc:
-  gdp = ext2_get_group_desc(sb, group_no, &gdp_bh);
+  gdp = ext2_get_group_desc(superb, group_no, &gdp_bh);
   if (!gdp)
     goto io_error;
 
@@ -852,18 +938,17 @@ retry_alloc:
 
   if (free_blocks > 0) {
     grp_target_blk = ((goal - es->s_first_data_block) %
-                      EXT2_BLOCKS_PER_GROUP(sb));
-    bitmap_bh = read_block_bitmap(sb, group_no);
+                      EXT2_BLOCKS_PER_GROUP(superb));
+    bitmap_bh = read_block_bitmap(superb, group_no);
     if (!bitmap_bh)
       goto io_error;
-    grp_alloc_blk = ext2_try_to_allocate_with_rsv(sb, group_no,
-                                                  bitmap_bh, grp_target_blk,
-                                                  my_rsv, &num);
+    grp_alloc_blk = ext2_try_to_allocate(superb, group_no,
+                                         bitmap_bh, grp_target_blk, &num);
     if (grp_alloc_blk >= 0)
       goto allocated;
   }
 
-  ngroups = EXT2_SB(sb)->s_groups_count;
+  ngroups = EXT2_SB(superb)->s_groups_count;
 
   /*
    * Now search the rest of the groups.  We assume that
@@ -873,7 +958,7 @@ retry_alloc:
     group_no++;
     if (group_no >= ngroups)
       group_no = 0;
-    gdp = ext2_get_group_desc(sb, group_no, &gdp_bh);
+    gdp = ext2_get_group_desc(superb, group_no, &gdp_bh);
     if (!gdp)
       goto io_error;
 
@@ -886,14 +971,14 @@ retry_alloc:
       continue;
 
     ext2_ops.brelse(bitmap_bh);
-    bitmap_bh = read_block_bitmap(sb, group_no);
+    bitmap_bh = read_block_bitmap(superb, group_no);
     if (!bitmap_bh)
       goto io_error;
     /*
      * try to allocate block(s) from this group, without a goal(-1).
      */
-    grp_alloc_blk = ext2_try_to_allocate_with_rsv(sb, group_no,
-                                                  bitmap_bh, -1, my_rsv, &num);
+    grp_alloc_blk = ext2_try_to_allocate(superb, group_no,
+                                         bitmap_bh, -1, &num);
     if (grp_alloc_blk >= 0)
       goto allocated;
   }
@@ -902,24 +987,22 @@ retry_alloc:
 
 allocated:
 
-  ret_block = grp_alloc_blk + ext2_group_first_block_no(sb, group_no);
+  ret_block = grp_alloc_blk + ext2_group_first_block_no(superb, group_no);
 
   if (in_range(gdp->bg_block_bitmap, ret_block, num) ||
       in_range(gdp->bg_inode_bitmap, ret_block, num) ||
       in_range(ret_block, gdp->bg_inode_table,
-               EXT2_SB(sb)->s_itb_per_group)         ||
+               EXT2_SB(superb)->s_itb_per_group)         ||
       in_range(ret_block + num - 1, gdp->bg_inode_table,
-               EXT2_SB(sb)->s_itb_per_group)) {
+               EXT2_SB(superb)->s_itb_per_group)) {
     goto retry_alloc;
   }
-
-  performed_allocation = 1;
 
   if (ret_block + num - 1 >= es->s_blocks_count) {
     panic("Error on ext2 block alloc");
   }
 
-  group_adjust_blocks(sb, group_no, gdp, gdp_bh, -num);
+  group_adjust_blocks(superb, group_no, gdp, gdp_bh, -num);
 
   ext2_ops.bwrite(bitmap_bh);
 
@@ -961,7 +1044,7 @@ ext2_alloc_blocks(struct inode *inode,
                   ext2_fsblk_t goal, int indirect_blks, int blks,
                   ext2_fsblk_t new_blocks[4], int *err)
 {
-  int target, i;
+  int target;
   unsigned long count = 0;
   int index = 0;
   ext2_fsblk_t current_block = 0;
@@ -1134,6 +1217,9 @@ ext2_bmap(struct inode *ip, uint bn)
 
   err = ext2_alloc_branch(ip, indirect_blks, &count, goal,
       offsets + (partial - chain), partial);
+
+  if (err <= 0)
+    panic("error on ext2_alloc_branch");
 
 got_it:
   blkn = chain[depth-1].key;

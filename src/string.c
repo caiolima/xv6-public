@@ -149,3 +149,18 @@ strconcat(char* r, const char* a, const char* b)
   r[asize + bsize] = 0;
 }
 
+void *
+memscan(void *addr, int c, int size)
+{
+  if (!size)
+    return addr;
+  asm volatile("repnz; scasb\n\t"
+      "jnz 1f\n\t"
+      "dec %%edi\n"
+      "1:"
+      : "=D" (addr), "=c" (size)
+      : "0" (addr), "1" (size), "a" (c)
+      : "memory");
+  return addr;
+}
+
