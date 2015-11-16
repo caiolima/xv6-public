@@ -17,6 +17,9 @@
 #define ext2_test_bit test_bit
 #define ext2_set_bit_atomic test_and_set_bit
 
+static struct ext2_inode_info * ext2_get_inode(struct superblock *sb,
+                                               uint ino, struct buf **bh);
+
 typedef struct {
   uint32 *p;
   uint32 key;
@@ -380,10 +383,170 @@ ext2_readsb(int dev, struct superblock *sb)
 
 }
 
+/*
+ * Read the inode allocation bitmap for a given block_group, reading
+ * into the specified slot in the superblock's bitmap cache.
+ *
+ * Return buffer_head of bitmap on success or NULL.
+ */
+static struct buf *
+read_inode_bitmap(struct superblock * sb, unsigned long block_group)
+{
+  struct ext2_group_desc *desc;
+  struct buf *bh = 0;
+
+  desc = ext2_get_group_desc(sb, block_group, 0);
+  if (!desc)
+    panic("error on read ext2 inode bitmap");
+
+  bh = ext2_ops.bread(sb->minor, desc->bg_inode_bitmap);
+  if (!bh)
+    panic("error on read ext2 inode bitmap");
+  return bh;
+}
+
+/* unsigned long */
+/* ext2_count_free_inodes(struct superblock * sb) */
+/* { */
+/*   struct ext2_group_desc *desc; */
+/*   unsigned long desc_count = 0; */
+/*   int i; */
+
+/*   for (i = 0; i < EXT2_SB(sb)->s_groups_count; i++) { */
+/*     desc = ext2_get_group_desc (sb, i, 0); */
+/*     if (!desc) */
+/*       continue; */
+/*     desc_count += desc->bg_free_inodes_count; */
+/*   } */
+
+/*   return desc_count; */
+/* } */
+
+/*
+ * There are two policies for allocating an inode.  If the new inode is
+ * a directory, then a forward search is made for a block group with both
+ * free space and a low directory-to-inode ratio; if that fails, then of
+ * the groups with above-average free space, that group with the fewest
+ * directories already is chosen.
+ *
+ * For other inodes, search forward from the parent directory\'s block
+ * group to find a free inode.
+ */
+/* static int */
+/* find_group_dir(struct superblock *sb, struct inode *parent) */
+/* { */
+/*   int ngroups = EXT2_SB(sb)->s_groups_count; */
+/*   int avefreei = ext2_count_free_inodes(sb) / ngroups; */
+/*   struct ext2_group_desc *desc, *best_desc = 0; */
+/*   int group, best_group = -1; */
+
+/*   for (group = 0; group < ngroups; group++) { */
+/*     desc = ext2_get_group_desc (sb, group, 0); */
+/*     if (!desc || !desc->bg_free_inodes_count) */
+/*       continue; */
+/*     if (desc->bg_free_inodes_count < avefreei) */
+/*       continue; */
+/*     if (!best_desc || */
+/*         (desc->bg_free_blocks_count > */
+/*          best_desc->bg_free_blocks_count)) { */
+/*       best_group = group; */
+/*       best_desc = desc; */
+/*     } */
+/*   } */
+/*   if (!best_desc) */
+/*     return -1; */
+
+/*   return best_group; */
+/* } */
+
+/**
+ * It is a dummy implementation of ialloc.
+ * Current Linux implementation uses an heuristic to alloc inodes
+ * in the best place.
+ * Our implementation will take an linear search over the inode bitmap
+ * and get the first free inode.
+ */
 struct inode*
 ext2_ialloc(uint dev, short type)
 {
-  panic("ext2 ialloc op not defined");
+  int i, group;
+  unsigned long ino;
+  struct ext2_sb_info *sbi;
+  struct buf *bitmap_bh = 0;
+  struct buf *bh2;
+  struct buf *ibh;
+  struct ext2_group_desc *gdp;
+  struct ext2_inode_info *ei;
+
+  sbi = EXT2_SB(&sb[dev]);
+
+  group = 0;
+  for(i = 0; i < sbi->s_groups_count; i++) {
+    gdp = ext2_get_group_desc(sb, group, &bh2);
+
+    if (bitmap_bh)
+      ext2_ops.brelse(bitmap_bh);
+
+    bitmap_bh = read_inode_bitmap(&sb[dev], group);
+    ino = 0;
+
+repeat_in_this_group:
+    ino = ext2_find_next_zero_bit((unsigned long *)bitmap_bh->data,
+                                  EXT2_INODES_PER_GROUP(sb), ino);
+    if (ino >= EXT2_INODES_PER_GROUP(sb)) {
+      if (++group == sbi->s_groups_count)
+        group = 0;
+      continue;
+    }
+    if (ext2_set_bit_atomic(ino, (unsigned long *)bitmap_bh->data)) {
+      /* we lost this inode */
+      if (++ino >= EXT2_INODES_PER_GROUP(sb)) {
+        /* this group is exhausted, try next group */
+        if (++group == sbi->s_groups_count)
+          group = 0;
+        continue;
+      }
+      /* try to find free inode in the same group */
+      goto repeat_in_this_group;
+    }
+    goto got;
+  }
+
+  /*
+   * Scanned all blockgroups.
+   */
+  panic("no space to alloc inode");
+
+got:
+  ext2_ops.bwrite(bitmap_bh);
+  ext2_ops.brelse(bitmap_bh);
+
+  ino += group * EXT2_INODES_PER_GROUP(sb) + 1;
+  if (ino < EXT2_FIRST_INO(sb) || ino > sbi->s_es->s_inodes_count) {
+    panic("ext2 invalid inode number allocated");
+  }
+
+  /* spin_lock(sb_bgl_lock(sbi, group)); */
+  gdp->bg_free_inodes_count -= 1;
+  /* spin_unlock(sb_bgl_lock(sbi, group)); */
+
+  ext2_ops.bwrite(bh2);
+
+  ei = ext2_get_inode(&sb[dev], ino, &ibh);
+
+  // Translate the xv6 to inode type type
+  if (type == T_DIR) {
+    ip->type = T_DIR;
+  } else if (S_ISREG(ei->i_ei.i_mode)) {
+    ip->type = T_FILE;
+  } else if (S_ISCHR(ei->i_ei.i_mode) || S_ISBLK(ei->i_ei.i_mode)) {
+    ip->type = T_DEV;
+  } else {
+    panic("ext2: invalid file mode");
+  }
+
+  ext2_ops.bwrite(ibh);
+  return ext2_iget(dev, ino);
 }
 
 uint
@@ -1140,7 +1303,7 @@ ext2_alloc_branch(struct inode *inode,
   for (n = 1; n <= indirect_blks;  n++) {
     /*
      * Get buffer_head for parent block, zero it out
-     * and set the pointer to new one, then send
+     * and set the pointer to new one, then send;
      * parent to disk.
      */
     bh = ext2_ops.bread(inode->dev, new_blocks[n-1]);
@@ -1284,7 +1447,7 @@ ext2_namecmp(const char *s, const char *t)
 }
 
 static struct ext2_inode_info *
-ext2_get_inode(struct superblock *sb, uint ino)
+ext2_get_inode(struct superblock *sb, uint ino, struct buf **bh)
 {
   struct buf * bp;
   unsigned long block_group;
@@ -1319,7 +1482,11 @@ ext2_get_inode(struct superblock *sb, uint ino)
 
   offset &= (EXT2_BLOCK_SIZE(sb) - 1);
   memmove(&ei->i_ei, bp->data + offset, sizeof(ei->i_ei));
-  ext2_ops.brelse(bp);
+  if (bh) {
+    *bh = bp;
+  } else {
+    ext2_ops.brelse(bp);
+  }
 
   return ei;
 }
@@ -1331,7 +1498,7 @@ int
 ext2_fill_inode(struct inode *ip) {
   struct ext2_inode_info *ei;
 
-  ei = ext2_get_inode(&sb[ip->dev], ip->inum);
+  ei = ext2_get_inode(&sb[ip->dev], ip->inum, 0);
 
   ip->i_private = ei;
 

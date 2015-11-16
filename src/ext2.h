@@ -339,6 +339,9 @@ int            ext2_dirlink(struct inode *dp, char *name, uint inum);
 int            ext2_unlink(struct inode *dp, uint off);
 int            ext2_isdirempty(struct inode *dp);
 
+#define EXT2_S_IFREG 0x8000
+#define EXT2_S_IFDIR 0x4000
+
 // Stat operations
 
 #define S_IFMT  00170000

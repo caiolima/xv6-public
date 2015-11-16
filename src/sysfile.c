@@ -246,7 +246,7 @@ create(char *path, short type, short major, short minor)
   ip->nlink = 1;
   ip->iops->iupdate(ip);
 
-  if(type == T_DIR){  // Create . and .. entries.
+  if (type == T_DIR) {  // Create . and .. entries.
     dp->nlink++;  // for ".."
     dp->iops->iupdate(dp);
     // No ip->nlink++ for ".": avoid cyclic ref count.
