@@ -534,18 +534,22 @@ got:
 
   ei = ext2_get_inode(&sb[dev], ino, &ibh);
 
+  // Erase the current inode
+  memset(&ei->i_ei, 0, sbi->s_inode_size);
   // Translate the xv6 to inode type type
   if (type == T_DIR) {
-    ip->type = T_DIR;
-  } else if (S_ISREG(ei->i_ei.i_mode)) {
-    ip->type = T_FILE;
-  } else if (S_ISCHR(ei->i_ei.i_mode) || S_ISBLK(ei->i_ei.i_mode)) {
-    ip->type = T_DEV;
+     ei->i_ei.i_mode = S_IFDIR;
+  } else if (type == T_FILE) {
+    ei->i_ei.i_mode = S_IFREG;
   } else {
-    panic("ext2: invalid file mode");
+    // We did not treat char and block devices with difference.
+    panic("ext2: invalid inode mode");
   }
 
+  // Persist the new inode values
   ext2_ops.bwrite(ibh);
+  ext2_ops.brelse(ibh);
+
   return ext2_iget(dev, ino);
 }
 
