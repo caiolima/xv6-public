@@ -1472,11 +1472,6 @@ ext2_get_inode(struct superblock *sb, uint ino, struct buf **bh)
   struct ext2_group_desc *gdp;
   struct ext2_inode *raw_inode;
 
-  /* ei = alloc_ext2_inode_info(); */
-
-  /* if (ei == 0) */
-  /*   panic("No memory to alloc ext2_inode"); */
-
   if ((ino != EXT2_ROOT_INO && ino < EXT2_FIRST_INO(sb)) ||
        ino > EXT2_SB(sb)->s_es->s_inodes_count)
     panic("Ext2 invalid inode number");
@@ -1497,7 +1492,7 @@ ext2_get_inode(struct superblock *sb, uint ino, struct buf **bh)
     panic("Error on read the  block inode");
 
   offset &= (EXT2_BLOCK_SIZE(sb) - 1);
-  raw_inode = (struct ext2_inode *) bp->data + offset;
+  raw_inode = (struct ext2_inode *)(bp->data + offset);
   if (bh)
     *bh = bp;
 
