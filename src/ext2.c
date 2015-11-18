@@ -17,8 +17,8 @@
 #define ext2_test_bit test_bit
 #define ext2_set_bit_atomic test_and_set_bit
 
-static struct ext2_inode_info * ext2_get_inode(struct superblock *sb,
-                                               uint ino, struct buf **bh);
+static struct ext2_inode * ext2_get_inode(struct superblock *sb,
+                                          uint ino, struct buf **bh);
 
 typedef struct {
   uint32 *p;
@@ -476,7 +476,7 @@ ext2_ialloc(uint dev, short type)
   struct buf *bh2;
   struct buf *ibh;
   struct ext2_group_desc *gdp;
-  struct ext2_inode_info *ei;
+  struct ext2_inode *raw_inode;
 
   sbi = EXT2_SB(&sb[dev]);
 
@@ -532,15 +532,15 @@ got:
 
   ext2_ops.bwrite(bh2);
 
-  ei = ext2_get_inode(&sb[dev], ino, &ibh);
+  raw_inode = ext2_get_inode(&sb[dev], ino, &ibh);
 
   // Erase the current inode
-  memset(&ei->i_ei, 0, sbi->s_inode_size);
+  memset(&raw_inode, 0, sbi->s_inode_size);
   // Translate the xv6 to inode type type
   if (type == T_DIR) {
-     ei->i_ei.i_mode = S_IFDIR;
+     raw_inode->i_mode = S_IFDIR;
   } else if (type == T_FILE) {
-    ei->i_ei.i_mode = S_IFREG;
+    raw_inode->i_mode = S_IFREG;
   } else {
     // We did not treat char and block devices with difference.
     panic("ext2: invalid inode mode");
@@ -610,7 +610,19 @@ ext2_dirlookup(struct inode *dp, char *name, uint *poff)
 void
 ext2_iupdate(struct inode *ip)
 {
-  panic("ext2 iupdate op not defined");
+  /* struct buf *bp; */
+  /* struct ext2_inode_info *ei; */
+
+  /* ei = ext2_get_inode(&sb[ip->dev], ip->inum, &bp); */
+
+  /* dip->type = ip->type; */
+  /* dip->major = ip->major; */
+  /* dip->minor = ip->minor; */
+  /* dip->nlink = ip->nlink; */
+  /* dip->size = ip->size; */
+  /* memmove(dip->addrs, s5ip->addrs, sizeof(s5ip->addrs)); */
+  /* ext2_ops.bwrite(bp); */
+  /* ext2_ops.brelse(bp); */
 }
 
 void
@@ -1450,7 +1462,7 @@ ext2_namecmp(const char *s, const char *t)
   return strncmp(s, t, EXT2_NAME_LEN);
 }
 
-static struct ext2_inode_info *
+static struct ext2_inode *
 ext2_get_inode(struct superblock *sb, uint ino, struct buf **bh)
 {
   struct buf * bp;
@@ -1458,12 +1470,12 @@ ext2_get_inode(struct superblock *sb, uint ino, struct buf **bh)
   unsigned long block;
   unsigned long offset;
   struct ext2_group_desc *gdp;
-  struct ext2_inode_info *ei;
+  struct ext2_inode *raw_inode;
 
-  ei = alloc_ext2_inode_info();
+  /* ei = alloc_ext2_inode_info(); */
 
-  if (ei == 0)
-    panic("No memory to alloc ext2_inode");
+  /* if (ei == 0) */
+  /*   panic("No memory to alloc ext2_inode"); */
 
   if ((ino != EXT2_ROOT_INO && ino < EXT2_FIRST_INO(sb)) ||
        ino > EXT2_SB(sb)->s_es->s_inodes_count)
@@ -1485,14 +1497,11 @@ ext2_get_inode(struct superblock *sb, uint ino, struct buf **bh)
     panic("Error on read the  block inode");
 
   offset &= (EXT2_BLOCK_SIZE(sb) - 1);
-  memmove(&ei->i_ei, bp->data + offset, sizeof(ei->i_ei));
-  if (bh) {
+  raw_inode = (struct ext2_inode *) bp->data + offset;
+  if (bh)
     *bh = bp;
-  } else {
-    ext2_ops.brelse(bp);
-  }
 
-  return ei;
+  return raw_inode;
 }
 
 /**
@@ -1501,10 +1510,19 @@ ext2_get_inode(struct superblock *sb, uint ino, struct buf **bh)
 int
 ext2_fill_inode(struct inode *ip) {
   struct ext2_inode_info *ei;
+  struct ext2_inode *raw_inode;
+  struct buf *bh;
 
-  ei = ext2_get_inode(&sb[ip->dev], ip->inum, 0);
+  ei = alloc_ext2_inode_info();
 
+  if (ei == 0)
+    panic("No memory to alloc ext2_inode");
+
+  raw_inode = ext2_get_inode(&sb[ip->dev], ip->inum, &bh);
+  memmove(&ei->i_ei, raw_inode, sizeof(ei->i_ei));
   ip->i_private = ei;
+
+  ext2_ops.brelse(bh);
 
   // Translate the inode type to xv6 type
   if (S_ISDIR(ei->i_ei.i_mode)) {
