@@ -610,19 +610,21 @@ ext2_dirlookup(struct inode *dp, char *name, uint *poff)
 void
 ext2_iupdate(struct inode *ip)
 {
-  /* struct buf *bp; */
-  /* struct ext2_inode_info *ei; */
+  struct buf *bp;
+  struct ext2_inode_info *ei;
+  struct ext2_inode *raw_inode;
 
-  /* ei = ext2_get_inode(&sb[ip->dev], ip->inum, &bp); */
+  ei = ip->i_private;
+  raw_inode = ext2_get_inode(&sb[ip->dev], ip->inum, &bp);
 
-  /* dip->type = ip->type; */
-  /* dip->major = ip->major; */
-  /* dip->minor = ip->minor; */
-  /* dip->nlink = ip->nlink; */
-  /* dip->size = ip->size; */
-  /* memmove(dip->addrs, s5ip->addrs, sizeof(s5ip->addrs)); */
-  /* ext2_ops.bwrite(bp); */
-  /* ext2_ops.brelse(bp); */
+  raw_inode->i_mode = ei->i_ei.i_mode;
+  raw_inode->i_blocks = ei->i_ei.i_blocks;
+  raw_inode->i_links_count = ip->nlink;
+  memmove(raw_inode->i_block, ei->i_ei.i_block, sizeof(ei->i_ei.i_block));
+  raw_inode->i_size = ip->size;
+
+  ext2_ops.bwrite(bp);
+  ext2_ops.brelse(bp);
 }
 
 void
@@ -1438,7 +1440,6 @@ ext2_writei(struct inode *ip, char *src, uint off, uint n)
 int
 ext2_dirlink(struct inode *dp, char *name, uint inum)
 {
-  panic("ext2 dirlink op not defined");
   return 0;
 }
 

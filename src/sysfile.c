@@ -250,7 +250,7 @@ create(char *path, short type, short major, short minor)
     dp->nlink++;  // for ".."
     dp->iops->iupdate(dp);
     // No ip->nlink++ for ".": avoid cyclic ref count.
-    if(ip->iops->dirlink(ip, ".", ip->inum) < 0 || ip->iops->dirlink(ip, "..", dp->inum) < 0)
+    if (ip->iops->dirlink(ip, ".", ip->inum) < 0 || ip->iops->dirlink(ip, "..", dp->inum) < 0)
       panic("create dots");
   }
 
