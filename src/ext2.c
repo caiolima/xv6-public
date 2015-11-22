@@ -250,8 +250,9 @@ ext2_get_group_desc(struct superblock * sb,
   }
 
   desc = (struct ext2_group_desc *) sbi->s_group_desc[group_desc]->data;
-  if (bh)
+  if (bh) {
     *bh = sbi->s_group_desc[group_desc];
+  }
   return desc + offset;
 }
 
@@ -482,7 +483,7 @@ ext2_ialloc(uint dev, short type)
 
   group = 0;
   for(i = 0; i < sbi->s_groups_count; i++) {
-    gdp = ext2_get_group_desc(sb, group, &bh2);
+    gdp = ext2_get_group_desc(&sb[dev], group, &bh2);
 
     if (bitmap_bh)
       ext2_ops.brelse(bitmap_bh);
@@ -492,15 +493,15 @@ ext2_ialloc(uint dev, short type)
 
 repeat_in_this_group:
     ino = ext2_find_next_zero_bit((unsigned long *)bitmap_bh->data,
-                                  EXT2_INODES_PER_GROUP(sb), ino);
-    if (ino >= EXT2_INODES_PER_GROUP(sb)) {
+                                  EXT2_INODES_PER_GROUP(&sb[dev]), ino);
+    if (ino >= EXT2_INODES_PER_GROUP(&sb[dev])) {
       if (++group == sbi->s_groups_count)
         group = 0;
       continue;
     }
     if (ext2_set_bit_atomic(ino, (unsigned long *)bitmap_bh->data)) {
       /* we lost this inode */
-      if (++ino >= EXT2_INODES_PER_GROUP(sb)) {
+      if (++ino >= EXT2_INODES_PER_GROUP(&sb[dev])) {
         /* this group is exhausted, try next group */
         if (++group == sbi->s_groups_count)
           group = 0;
@@ -521,8 +522,8 @@ got:
   ext2_ops.bwrite(bitmap_bh);
   ext2_ops.brelse(bitmap_bh);
 
-  ino += group * EXT2_INODES_PER_GROUP(sb) + 1;
-  if (ino < EXT2_FIRST_INO(sb) || ino > sbi->s_es->s_inodes_count) {
+  ino += group * EXT2_INODES_PER_GROUP(&sb[dev]) + 1;
+  if (ino < EXT2_FIRST_INO(&sb[dev]) || ino > sbi->s_es->s_inodes_count) {
     panic("ext2 invalid inode number allocated");
   }
 
@@ -535,10 +536,10 @@ got:
   raw_inode = ext2_get_inode(&sb[dev], ino, &ibh);
 
   // Erase the current inode
-  memset(&raw_inode, 0, sbi->s_inode_size);
+  memset(raw_inode, 0, sbi->s_inode_size);
   // Translate the xv6 to inode type type
   if (type == T_DIR) {
-     raw_inode->i_mode = S_IFDIR;
+    raw_inode->i_mode = S_IFDIR;
   } else if (type == T_FILE) {
     raw_inode->i_mode = S_IFREG;
   } else {
@@ -546,7 +547,6 @@ got:
     panic("ext2: invalid inode mode");
   }
 
-  // Persist the new inode values
   ext2_ops.bwrite(ibh);
   ext2_ops.brelse(ibh);
 
@@ -579,12 +579,16 @@ ext2_dirlookup(struct inode *dp, char *name, uint *poff)
   struct buf *bh;
   int namelen = strlen(name);
 
+  cprintf("Debug lookup name: %s, len: %d\n", name, namelen);
+
   for (off = 0; off < dp->size;) {
     currblk = off / sb[dp->dev].blocksize;
 
     bh = ext2_ops.bread(dp->dev, ext2_iops.bmap(dp, currblk));
 
     de = (struct ext2_dir_entry_2 *) (bh->data + (off % sb[dp->dev].blocksize));
+
+    cprintf("Debug de.inode: %d, de.size: %d, de.name_len: %d\n", de->inode, de->rec_len, de->name_len);
 
     if(de->inode == 0 || de->name_len != namelen) {
       off += de->rec_len;
@@ -1399,7 +1403,7 @@ ext2_bmap(struct inode *ip, uint bn)
   err = ext2_alloc_branch(ip, indirect_blks, &count, goal,
       offsets + (partial - chain), partial);
 
-  if (err <= 0)
+  if (err < 0)
     panic("error on ext2_alloc_branch");
 
 got_it:
@@ -1437,9 +1441,107 @@ ext2_writei(struct inode *ip, char *src, uint off, uint n)
   return 0;
 }
 
-int
-ext2_dirlink(struct inode *dp, char *name, uint inum)
+/*
+ * Return the offset into page `page_nr' of the last valid
+ * byte in that page, plus one.
+ */
+static unsigned
+ext2_last_byte(struct inode *inode, unsigned long page_nr)
 {
+  unsigned last_byte = inode->size;
+  last_byte -= page_nr * sb[inode->dev].blocksize;
+  if (last_byte > sb[inode->dev].blocksize)
+    last_byte = sb[inode->dev].blocksize;
+  return last_byte;
+}
+
+
+int
+ext2_dirlink(struct inode *dp, char *name, uint inum, uint type)
+{
+  int namelen = strlen(name);
+  struct buf *bh;
+  unsigned chunk_size = sb[dp->dev].blocksize;
+  unsigned reclen = EXT2_DIR_REC_LEN(namelen);
+  unsigned short rec_len, name_len;
+  char *dir_end;
+  struct ext2_dir_entry_2 *de;
+  int n;
+  int numblocks = (dp->size + chunk_size - 1) / chunk_size;
+  char *kaddr;
+
+  /* if (ext2_iops.dirlookup(dp, name, 0) != 0) { */
+  /*   cprintf("Entry already exists\n"); */
+  /*   return -1; */
+  /* } */
+
+  for (n = 0; n <= numblocks; n++) {
+    bh = ext2_ops.bread(dp->dev, ext2_iops.bmap(dp, n));
+    kaddr = (char *) bh->data;
+    de = (struct ext2_dir_entry_2 *) kaddr;
+    dir_end = kaddr + ext2_last_byte(dp, n);
+    kaddr += chunk_size - reclen;
+
+    while ((char *)de <= kaddr) {
+      if ((char *)de == dir_end) {
+        /* We hit i_size */
+        name_len = 0;
+        rec_len = chunk_size;
+        de->rec_len = chunk_size;
+        de->inode = 0;
+        goto got_it;
+      }
+
+      if (de->rec_len == 0) {
+        cprintf("Error on de->reclen");
+        return -1;
+      }
+
+      name_len = EXT2_DIR_REC_LEN(de->name_len);
+      rec_len = de->rec_len;
+      if (!de->inode && rec_len >= reclen)
+              goto got_it;
+      if (rec_len >= name_len + reclen)
+              goto got_it;
+      de = (struct ext2_dir_entry_2 *) ((char *) de + rec_len);
+    }
+
+    ext2_ops.brelse(bh);
+  }
+
+  return -1;
+
+got_it:
+  if (de->inode) {
+    struct ext2_dir_entry_2 *de1 = (struct ext2_dir_entry_2 *) ((char *) de + name_len);
+    de1->rec_len = rec_len - name_len;
+    de->rec_len = name_len;
+    de = de1;
+  }
+  cprintf("Debug namelen: %d\n", namelen);
+  de->name_len = namelen;
+  memmove(de->name, name, namelen);
+  de->inode = inum;
+
+  // Translate the xv6 to inode type type
+  if (type == T_DIR) {
+    de->file_type = EXT2_FT_DIR;
+  } else if (type == T_FILE) {
+    de->file_type = EXT2_FT_REG_FILE;
+  } else {
+    // We did not treat char and block devices with difference.
+    panic("ext2: invalid inode mode");
+  }
+
+  ext2_ops.bwrite(bh);
+  ext2_ops.brelse(bh);
+
+  if ((n + 1) * chunk_size > dp->size) {
+    cprintf("Updated the inode size\n");
+    dp->size += rec_len;
+    ext2_iops.iupdate(dp);
+  }
+
   return 0;
 }
 

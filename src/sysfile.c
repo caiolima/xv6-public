@@ -141,7 +141,7 @@ sys_link(void)
   if((dp = nameiparent(new, name)) == 0)
     goto bad;
   dp->iops->ilock(dp);
-  if(dp->dev != ip->dev || dp->iops->dirlink(dp, name, ip->inum) < 0){
+  if(dp->dev != ip->dev || dp->iops->dirlink(dp, name, ip->inum, ip->type) < 0){
     iunlockput(dp);
     goto bad;
   }
@@ -250,14 +250,20 @@ create(char *path, short type, short major, short minor)
     dp->nlink++;  // for ".."
     dp->iops->iupdate(dp);
     // No ip->nlink++ for ".": avoid cyclic ref count.
-    if (ip->iops->dirlink(ip, ".", ip->inum) < 0 || ip->iops->dirlink(ip, "..", dp->inum) < 0)
+    if (ip->iops->dirlink(ip, ".", ip->inum, ip->type) < 0 || ip->iops->dirlink(ip, "..", dp->inum, dp->type) < 0)
       panic("create dots");
   }
 
-  if(dp->iops->dirlink(dp, name, ip->inum) < 0)
+  cprintf("Created dots\n");
+
+  if(dp->iops->dirlink(dp, name, ip->inum, ip->type) < 0)
     panic("create: dirlink");
 
+  cprintf("Linked with parent\n");
+
   iunlockput(dp);
+
+  cprintf("Finished iunlockput\n");
 
   return ip;
 }

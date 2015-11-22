@@ -40,7 +40,7 @@ struct inode_operations {
   void (*stati)(struct inode *ip, struct stat *st);
   int (*readi)(struct inode *ip, char *dst, uint off, uint n);
   int (*writei)(struct inode *ip, char *src, uint off, uint n);
-  int (*dirlink)(struct inode *dp, char *name, uint inum);
+  int (*dirlink)(struct inode *dp, char *name, uint inum, uint type);
   int (*unlink)(struct inode *dp, uint off);
   int (*isdirempty)(struct inode *dp);
 };
@@ -151,7 +151,7 @@ struct filesystem_type* getfs(const char *fs_name);
 void generic_iunlock(struct inode*);
 void generic_stati(struct inode *ip, struct stat *st);
 int  generic_readi(struct inode *ip, char *dst, uint off, uint n);
-int  generic_dirlink(struct inode *dp, char *name, uint inum);
+int  generic_dirlink(struct inode *dp, char *name, uint inum, uint type);
 
 int sb_set_blocksize(struct superblock *sb, int size);
 

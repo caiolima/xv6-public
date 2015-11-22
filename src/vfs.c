@@ -172,7 +172,7 @@ generic_stati(struct inode *ip, struct stat *st)
 }
 
 int
-generic_dirlink(struct inode *dp, char *name, uint inum)
+generic_dirlink(struct inode *dp, char *name, uint inum, uint type)
 {
   int off;
   struct dirent de;
