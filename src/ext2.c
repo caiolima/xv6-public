@@ -579,16 +579,12 @@ ext2_dirlookup(struct inode *dp, char *name, uint *poff)
   struct buf *bh;
   int namelen = strlen(name);
 
-  cprintf("Debug lookup name: %s, len: %d\n", name, namelen);
-
   for (off = 0; off < dp->size;) {
     currblk = off / sb[dp->dev].blocksize;
 
     bh = ext2_ops.bread(dp->dev, ext2_iops.bmap(dp, currblk));
 
     de = (struct ext2_dir_entry_2 *) (bh->data + (off % sb[dp->dev].blocksize));
-
-    cprintf("Debug de.inode: %d, de.size: %d, de.name_len: %d\n", de->inode, de->rec_len, de->name_len);
 
     if(de->inode == 0 || de->name_len != namelen) {
       off += de->rec_len;
@@ -713,6 +709,40 @@ ext2_block_to_path(struct inode *inode,
     *boundary = final - 1 - (i_block & (ptrs - 1));
 
   return n;
+}
+
+static void
+ext2_update_branch(struct inode *inode, uint bn, Indirect *chain)
+{
+  int ptrs = EXT2_ADDR_PER_BLOCK(&sb[inode->dev]);
+  int ptrs_bits = EXT2_ADDR_PER_BLOCK_BITS(&sb[inode->dev]);
+  const long direct_blocks = EXT2_NDIR_BLOCKS,
+        indirect_blocks = ptrs,
+        double_blocks = (1 << (ptrs_bits * 2));
+  struct ext2_inode_info *ei;
+
+  ei = inode->i_private;
+
+  // Update inode block
+  if (bn < 0) {
+    panic("block_to_path invalid block num");
+  } else if (bn < direct_blocks) {
+    if (ei->i_ei.i_block[bn] == 0)
+      ei->i_ei.i_block[bn] = chain[0].key;
+  } else if ((bn -= direct_blocks) < indirect_blocks) {
+    if (ei->i_ei.i_block[EXT2_IND_BLOCK] == 0)
+      ei->i_ei.i_block[EXT2_IND_BLOCK] = chain[0].key;
+  } else if ((bn -= indirect_blocks) < double_blocks) {
+    if (ei->i_ei.i_block[EXT2_DIND_BLOCK] == 0)
+      ei->i_ei.i_block[EXT2_DIND_BLOCK] = chain[0].key;
+  } else if (((bn -= double_blocks) >> (ptrs_bits * 2)) < ptrs) {
+    if (ei->i_ei.i_block[EXT2_TIND_BLOCK] == 0)
+      ei->i_ei.i_block[EXT2_TIND_BLOCK] = chain[0].key;
+  } else {
+    panic("This block is out of bounds from this ext2 fs");
+  }
+
+  return;
 }
 
 /**
@@ -1408,6 +1438,8 @@ ext2_bmap(struct inode *ip, uint bn)
 
 got_it:
   blkn = chain[depth-1].key;
+  ext2_update_branch(ip, bn, chain);
+
   /* Clean up and exit */
   partial = chain + depth - 1;  /* the whole chain */
 /* cleanup: */
@@ -1470,10 +1502,9 @@ ext2_dirlink(struct inode *dp, char *name, uint inum, uint type)
   int numblocks = (dp->size + chunk_size - 1) / chunk_size;
   char *kaddr;
 
-  /* if (ext2_iops.dirlookup(dp, name, 0) != 0) { */
-  /*   cprintf("Entry already exists\n"); */
-  /*   return -1; */
-  /* } */
+  if (ext2_iops.dirlookup(dp, name, 0) != 0) {
+    return -1;
+  }
 
   for (n = 0; n <= numblocks; n++) {
     bh = ext2_ops.bread(dp->dev, ext2_iops.bmap(dp, n));
@@ -1493,7 +1524,6 @@ ext2_dirlink(struct inode *dp, char *name, uint inum, uint type)
       }
 
       if (de->rec_len == 0) {
-        cprintf("Error on de->reclen");
         return -1;
       }
 
@@ -1518,9 +1548,8 @@ got_it:
     de->rec_len = name_len;
     de = de1;
   }
-  cprintf("Debug namelen: %d\n", namelen);
   de->name_len = namelen;
-  memmove(de->name, name, namelen);
+  strncpy(de->name, name, namelen);
   de->inode = inum;
 
   // Translate the xv6 to inode type type
@@ -1537,7 +1566,6 @@ got_it:
   ext2_ops.brelse(bh);
 
   if ((n + 1) * chunk_size > dp->size) {
-    cprintf("Updated the inode size\n");
     dp->size += rec_len;
     ext2_iops.iupdate(dp);
   }
