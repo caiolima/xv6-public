@@ -254,16 +254,10 @@ create(char *path, short type, short major, short minor)
       panic("create dots");
   }
 
-  cprintf("Created dots\n");
-
   if(dp->iops->dirlink(dp, name, ip->inum, ip->type) < 0)
     panic("create: dirlink");
 
-  cprintf("Linked with parent\n");
-
   iunlockput(dp);
-
-  cprintf("Finished iunlockput\n");
 
   return ip;
 }

@@ -1469,8 +1469,34 @@ ext2_ilock(struct inode *ip)
 int
 ext2_writei(struct inode *ip, char *src, uint off, uint n)
 {
-  panic("ext2 writei op not defined");
-  return 0;
+  uint tot, m;
+  struct buf *bp;
+
+  if (ip->type == T_DEV) {
+    if (ip->major < 0 || ip->major >= NDEV || !devsw[ip->major].write)
+      return -1;
+    return devsw[ip->major].write(ip, src, n);
+  }
+
+  if (off > ip->size || off + n < off)
+    return -1;
+
+  // TODO: Verify the max file size
+
+  for (tot = 0; tot < n; tot += m, off += m, src += m) {
+    bp = ext2_ops.bread(ip->dev, ext2_iops.bmap(ip, off / sb[ip->dev].blocksize));
+    m = min(n - tot, sb[ip->dev].blocksize - off % sb[ip->dev].blocksize);
+    memmove(bp->data + off % sb[ip->dev].blocksize, src, m);
+    ext2_ops.bwrite(bp);
+    ext2_ops.brelse(bp);
+  }
+
+  if(n > 0 && off > ip->size){
+    ip->size = off;
+    ext2_iops.iupdate(ip);
+  }
+
+  return n;
 }
 
 /*
@@ -1576,21 +1602,106 @@ got_it:
 int
 ext2_isdirempty(struct inode *dp)
 {
-  panic("ext2 isdirempty op not defined");
+  struct buf *bh;
+  unsigned long i;
+  char *kaddr;
+  struct ext2_dir_entry_2 *de;
+  int chunk_size = sb[dp->dev].blocksize;
+  int numblocks = (dp->size + chunk_size - 1) / chunk_size;
+
+  for (i = 0; i < numblocks; i++) {
+    bh = ext2_ops.bread(dp->dev, ext2_iops.bmap(dp, i));
+
+    if (!bh) {
+      panic("ext2_isemptydir error");
+    }
+
+    kaddr = (char *)bh->data;
+    de = (struct ext2_dir_entry_2 *)kaddr;
+    kaddr += ext2_last_byte(dp, i) - EXT2_DIR_REC_LEN(1);
+
+    while ((char *)de <= kaddr) {
+      if (de->rec_len == 0) {
+        goto not_empty;
+      }
+      if (de->inode != 0) {
+        /* check for . and .. */
+        if (de->name[0] != '.')
+          goto not_empty;
+        if (de->name_len > 2)
+          goto not_empty;
+        if (de->name_len < 2) {
+          if (de->inode != dp->inum)
+            goto not_empty;
+        } else if (de->name[1] != '.')
+          goto not_empty;
+      }
+      de = (struct ext2_dir_entry_2 *)((char *)de + de->rec_len);
+    }
+    ext2_ops.brelse(bh);
+  }
   return 1;
+
+not_empty:
+  ext2_ops.brelse(bh);
+  return 0;
 }
 
 int
 ext2_unlink(struct inode *dp, uint off)
 {
-  panic("ext2 unlink op not defined");
+  struct buf *bh;
+  uint bn, offset;
+  struct ext2_dir_entry_2 *dir;
+  int chunk_size;
+
+  chunk_size = sb[dp->dev].blocksize;
+  bn = off / sb[dp->dev].blocksize;
+  offset = off % sb[dp->dev].blocksize;
+  bh = ext2_ops.bread(dp->dev, ext2_iops.bmap(dp, bn));
+
+  dir = (struct ext2_dir_entry_2 *)(bh->data + offset);
+  char *kaddr = (char *)bh->data;
+
+  unsigned from = ((char*)dir - kaddr) & ~(chunk_size - 1);
+  unsigned to = ((char *)dir - kaddr) + dir->rec_len;
+
+  struct ext2_dir_entry_2 *pde = 0;
+  struct ext2_dir_entry_2 *de = (struct ext2_dir_entry_2 *) (kaddr + from);
+
+  while ((char*)de < (char*)dir) {
+    if (de->rec_len == 0)
+      panic("ext2_unlink invalid dir content");
+    pde = de;
+    de = (struct ext2_dir_entry_2 *)((char *)de + de->rec_len);
+  }
+
+  if (pde) {
+    from = (char*)pde - (char *)bh->data;
+    pde->rec_len = to - from;
+  }
+
+  dir->inode = 0;
+
+  ext2_ops.bwrite(bh);
+  ext2_ops.brelse(bh);
+
   return 0;
 }
 
 int
 ext2_namecmp(const char *s, const char *t)
 {
-  return strncmp(s, t, EXT2_NAME_LEN);
+  unsigned short slen = strlen(s), tlen = strlen(t);
+  unsigned short size = slen;
+
+  if (slen != tlen)
+    return -1;
+
+  if (tlen > slen)
+    size = tlen;
+
+  return strncmp(s, t, size);
 }
 
 static struct ext2_inode *
