@@ -390,7 +390,7 @@ iput(struct inode *ip)
     ip->iops->itrunc(ip);
     ip->type = 0;
     ip->iops->iupdate(ip);
-    ip->iops->cleanup(ip);
+    /* ip->iops->cleanup(ip); */
     acquire(&icache.lock);
     ip->flags = 0;
     wakeup(ip);

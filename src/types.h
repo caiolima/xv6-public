@@ -188,5 +188,19 @@ static inline int test_and_set_bit(long nr, volatile unsigned long *addr)
   GEN_BINARY_RMWcc("lock; bts", *addr, "Ir", nr, "%0", "c");
 }
 
+/**
+ * test_and_clear_bit - Clear a bit and return its old value
+ * @nr: Bit to clear
+ * @addr: Address to count from
+ *
+ * This operation is atomic and cannot be reordered.
+ * It also implies a memory barrier.
+ */
+static inline int test_and_clear_bit(long nr, volatile unsigned long *addr)
+{
+  GEN_BINARY_RMWcc("lock; btr", *addr, "Ir", nr, "%0", "c");
+}
+
+
 #endif /* XV6_TYPES_H_ */
 

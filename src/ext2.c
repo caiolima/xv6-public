@@ -16,9 +16,20 @@
 #define ext2_find_next_zero_bit find_next_zero_bit
 #define ext2_test_bit test_bit
 #define ext2_set_bit_atomic test_and_set_bit
+#define ext2_clear_bit_atomic test_and_clear_bit
+
+static int ext2_block_to_path(struct inode *inode,
+                   long i_block, int offsets[4], int *boundary);
 
 static struct ext2_inode * ext2_get_inode(struct superblock *sb,
                                           uint ino, struct buf **bh);
+
+static struct buf * read_block_bitmap(struct superblock *sb,
+                                      unsigned int block_group);
+
+static void group_adjust_blocks(struct superblock *sb, int group_no,
+                                struct ext2_group_desc *desc, struct buf *bh,
+                                int count);
 
 typedef struct {
   uint32 *p;
@@ -195,7 +206,8 @@ ext2_getroot(int major, int minor)
   return ext2_iget(minor, EXT2_ROOT_INO);
 }
 
-static inline int test_root(int a, int b)
+static inline int
+test_root(int a, int b)
 {
   int num = b;
 
@@ -204,7 +216,8 @@ static inline int test_root(int a, int b)
   return num == a;
 }
 
-static int ext2_group_sparse(int group)
+static int
+ext2_group_sparse(int group)
 {
   if (group <= 1)
     return 1;
@@ -381,7 +394,6 @@ ext2_readsb(int dev, struct superblock *sb)
   }
 
   sbi->s_gdb_count = db_count;
-
 }
 
 /*
@@ -405,60 +417,6 @@ read_inode_bitmap(struct superblock * sb, unsigned long block_group)
     panic("error on read ext2 inode bitmap");
   return bh;
 }
-
-/* unsigned long */
-/* ext2_count_free_inodes(struct superblock * sb) */
-/* { */
-/*   struct ext2_group_desc *desc; */
-/*   unsigned long desc_count = 0; */
-/*   int i; */
-
-/*   for (i = 0; i < EXT2_SB(sb)->s_groups_count; i++) { */
-/*     desc = ext2_get_group_desc (sb, i, 0); */
-/*     if (!desc) */
-/*       continue; */
-/*     desc_count += desc->bg_free_inodes_count; */
-/*   } */
-
-/*   return desc_count; */
-/* } */
-
-/*
- * There are two policies for allocating an inode.  If the new inode is
- * a directory, then a forward search is made for a block group with both
- * free space and a low directory-to-inode ratio; if that fails, then of
- * the groups with above-average free space, that group with the fewest
- * directories already is chosen.
- *
- * For other inodes, search forward from the parent directory\'s block
- * group to find a free inode.
- */
-/* static int */
-/* find_group_dir(struct superblock *sb, struct inode *parent) */
-/* { */
-/*   int ngroups = EXT2_SB(sb)->s_groups_count; */
-/*   int avefreei = ext2_count_free_inodes(sb) / ngroups; */
-/*   struct ext2_group_desc *desc, *best_desc = 0; */
-/*   int group, best_group = -1; */
-
-/*   for (group = 0; group < ngroups; group++) { */
-/*     desc = ext2_get_group_desc (sb, group, 0); */
-/*     if (!desc || !desc->bg_free_inodes_count) */
-/*       continue; */
-/*     if (desc->bg_free_inodes_count < avefreei) */
-/*       continue; */
-/*     if (!best_desc || */
-/*         (desc->bg_free_blocks_count > */
-/*          best_desc->bg_free_blocks_count)) { */
-/*       best_group = group; */
-/*       best_desc = desc; */
-/*     } */
-/*   } */
-/*   if (!best_desc) */
-/*     return -1; */
-
-/*   return best_group; */
-/* } */
 
 /**
  * It is a dummy implementation of ialloc.
@@ -627,10 +585,304 @@ ext2_iupdate(struct inode *ip)
   ext2_ops.brelse(bp);
 }
 
+/**
+ * ext2_free_blocks() -- Free given blocks and update quota and i_blocks
+ * @inode:    inode
+ * @block:    start physical block to free
+ * @count:    number of blocks to free
+ */
+void
+ext2_free_blocks(struct inode * inode, unsigned long block,
+                  unsigned long count)
+{
+  struct buf *bitmap_bh = 0;
+  struct buf * bh2;
+  unsigned long block_group;
+  unsigned long bit;
+  unsigned long i;
+  unsigned long overflow;
+  struct superblock * superb = &sb[inode->dev];
+  struct ext2_sb_info * sbi = EXT2_SB(sb);
+  struct ext2_group_desc * desc;
+  struct ext2_superblock * es = sbi->s_es;
+  unsigned freed = 0, group_freed;
+
+  if (block < es->s_first_data_block ||
+      block + count < block ||
+      block + count > es->s_blocks_count) {
+    panic("ext2 free blocks in not datazone");
+  }
+
+do_more:
+  overflow = 0;
+  block_group = (block - es->s_first_data_block) / EXT2_BLOCKS_PER_GROUP(superb);
+  bit = (block - es->s_first_data_block) % EXT2_BLOCKS_PER_GROUP(superb);
+  /*
+   * Check to see if we are freeing blocks across a group
+   * boundary.
+   */
+  if (bit + count > EXT2_BLOCKS_PER_GROUP(superb)) {
+    overflow = bit + count - EXT2_BLOCKS_PER_GROUP(superb);
+    count -= overflow;
+  }
+  if (bitmap_bh)
+    brelse(bitmap_bh);
+
+  bitmap_bh = read_block_bitmap(superb, block_group);
+  if (!bitmap_bh)
+    goto error_return;
+
+  desc = ext2_get_group_desc (superb, block_group, &bh2);
+  if (!desc)
+    goto error_return;
+
+  if (in_range (desc->bg_block_bitmap, block, count) ||
+      in_range (desc->bg_inode_bitmap, block, count) ||
+      in_range (block, desc->bg_inode_table,
+                sbi->s_itb_per_group) ||
+      in_range (block + count - 1, desc->bg_inode_table,
+                sbi->s_itb_per_group)) {
+    panic("Freeing blocks on system zone");
+    goto error_return;
+  }
+
+  for (i = 0, group_freed = 0; i < count; i++) {
+    if (!ext2_clear_bit_atomic(bit + i, (unsigned long *)bitmap_bh->data)) {
+      panic("ext2 bit already cleared for block");
+    } else {
+      group_freed++;
+    }
+  }
+
+  ext2_ops.bwrite(bitmap_bh);
+  group_adjust_blocks(superb, block_group, desc, bh2, group_freed);
+  freed += group_freed;
+
+  if (overflow) {
+    block += count;
+    count = overflow;
+    goto do_more;
+  }
+error_return:
+  ext2_ops.brelse(bitmap_bh);
+}
+
+/**
+ * ext2_free_data - free a list of data blocks
+ * @inode: inode we are dealing with
+ * @p: array of block numbers
+ * @q: points immediately past the end of array
+ *
+ * We are freeing all blocks referred from that array (numbers are
+ * stored as little-endian 32-bit) and updating @inode->i_blocks
+ * appropriately.
+ */
+static inline void
+ext2_free_data(struct inode *inode, uint32 *p, uint32 *q)
+{
+  unsigned long block_to_free = 0, count = 0;
+  unsigned long nr;
+
+  for ( ; p < q ; p++) {
+    nr = *p;
+    if (nr) {
+      *p = 0;
+      /* accumulate blocks to free if they're contiguous */
+      if (count == 0)
+        goto free_this;
+      else if (block_to_free == nr - count)
+        count++;
+      else {
+        ext2_free_blocks(inode, block_to_free, count);
+        /* mark_inode_dirty(inode); */
+free_this:
+        block_to_free = nr;
+        count = 1;
+      }
+    }
+  }
+  if (count > 0) {
+    ext2_free_blocks(inode, block_to_free, count);
+    /* mark_inode_dirty(inode); */
+  }
+}
+
+/**
+ * ext2_free_branches - free an array of branches
+ * @inode: inode we are dealing with
+ * @p: array of block numbers
+ * @q: pointer immediately past the end of array
+ * @depth: depth of the branches to free
+ */
+static void
+ext2_free_branches(struct inode *inode, uint32 *p, uint32 *q, int depth)
+{
+  struct buf * bh;
+  unsigned long nr;
+
+  if (depth--) {
+    int addr_per_block = EXT2_ADDR_PER_BLOCK(&sb[inode->dev]);
+    for ( ; p < q ; p++) {
+      nr = *p;
+      if (!nr)
+        continue;
+      *p = 0;
+      bh = ext2_ops.bread(inode->dev, nr);
+      /*
+       * A read failure? Report error and clear slot
+       * (should be rare).
+       */
+      if (!bh) {
+        panic("ext2 block read failure");
+        continue;
+      }
+      ext2_free_branches(inode,
+                         (uint32*)bh->data,
+                         (uint32*)bh->data + addr_per_block,
+                         depth);
+      ext2_ops.brelse(bh);
+      ext2_free_blocks(inode, nr, 1);
+      /* mark_inode_dirty(inode); */
+    }
+  } else {
+    ext2_free_data(inode, p, q);
+  }
+}
+
+static void
+ext2_release_inode(struct superblock *sb, int group, int dir)
+{
+  struct ext2_group_desc * desc;
+  struct buf *bh;
+
+  desc = ext2_get_group_desc(sb, group, &bh);
+  if (!desc) {
+    panic("Error on get group descriptor");
+    return;
+  }
+
+  /* spin_lock(sb_bgl_lock(EXT2_SB(sb), group)); */
+  desc->bg_free_inodes_count += 1;
+  if (dir)
+    desc->bg_used_dirs_count -= 1;
+  /* spin_unlock(sb_bgl_lock(EXT2_SB(sb), group)); */
+  ext2_ops.bwrite(bh);
+}
+
+/*
+ * NOTE! When we get the inode, we're the only people
+ * that have access to it, and as such there are no
+ * race conditions we have to worry about. The inode
+ * is not on the hash-lists, and it cannot be reached
+ * through the filesystem because the directory entry
+ * has been deleted earlier.
+ *
+ * HOWEVER: we must make sure that we get no aliases,
+ * which means that we have to call "clear_inode()"
+ * _before_ we mark the inode not in use in the inode
+ * bitmaps. Otherwise a newly created file might use
+ * the same inode number (not actually the same pointer
+ * though), and then we'd have two inodes sharing the
+ * same inode number and space on the harddisk.
+ */
+void
+ext2_free_inode (struct inode * inode)
+{
+  struct superblock *superb = &sb[inode->dev];
+  int is_directory;
+  unsigned long ino;
+  struct buf *bitmap_bh;
+  unsigned long block_group;
+  unsigned long bit;
+  struct ext2_superblock * es;
+  struct ext2_inode_info *ei;
+
+  ino = inode->inum;
+  ei = inode->i_private;
+
+  es = EXT2_SB(superb)->s_es;
+  is_directory = S_ISDIR(ei->i_ei.i_mode);
+
+  if (ino < EXT2_FIRST_INO(superb) ||
+      ino > es->s_inodes_count) {
+    panic("ext2 reserved or non existent inode");
+    return;
+  }
+
+  block_group = (ino - 1) / EXT2_INODES_PER_GROUP(superb);
+  bit = (ino - 1) % EXT2_INODES_PER_GROUP(superb);
+  bitmap_bh = read_inode_bitmap(superb, block_group);
+  if (!bitmap_bh)
+    return;
+
+  /* Ok, now we can actually update the inode bitmaps.. */
+  if (!ext2_clear_bit_atomic(bit, (void *) bitmap_bh->data))
+    panic("ext2 bit already cleared");
+  else
+    ext2_release_inode(superb, block_group, is_directory);
+
+  ext2_ops.bwrite(bitmap_bh);
+  ext2_ops.brelse(bitmap_bh);
+}
+
 void
 ext2_itrunc(struct inode *ip)
 {
-  panic("ext2 itrunc op not defined");
+  uint32 *i_data;
+  int offsets[4];
+  uint32 nr = 0;
+  int n;
+  long iblock;
+  unsigned blocksize;
+  blocksize = sb[ip->dev].blocksize;
+  iblock = (blocksize-1) >> EXT2_BLOCK_SIZE_BITS(&sb[ip->dev]);
+  n = ext2_block_to_path(ip, iblock, offsets, 0);
+
+  struct ext2_inode_info *ei = ip->i_private;
+
+  i_data = ei->i_ei.i_block;
+
+  if (n == 0)
+    return;
+
+  /* lock block here */
+
+  if (n == 1) {
+    ext2_free_data(ip, i_data+offsets[0],
+                   i_data + EXT2_NDIR_BLOCKS);
+  }
+
+  /* Kill the remaining (whole) subtrees */
+  switch (offsets[0]) {
+    default:
+      nr = i_data[EXT2_IND_BLOCK];
+      if (nr) {
+        i_data[EXT2_IND_BLOCK] = 0;
+        /* mark_inode_dirty(inode); */
+        ext2_free_branches(ip, &nr, &nr+1, 1);
+      }
+    case EXT2_IND_BLOCK:
+      nr = i_data[EXT2_DIND_BLOCK];
+      if (nr) {
+        i_data[EXT2_DIND_BLOCK] = 0;
+        /* mark_inode_dirty(inode); */
+        ext2_free_branches(ip, &nr, &nr+1, 2);
+      }
+    case EXT2_DIND_BLOCK:
+      nr = i_data[EXT2_TIND_BLOCK];
+      if (nr) {
+        i_data[EXT2_TIND_BLOCK] = 0;
+        /* mark_inode_dirty(inode); */
+        ext2_free_branches(ip, &nr, &nr+1, 3);
+      }
+    case EXT2_TIND_BLOCK:
+      ;
+  }
+
+  // unlock the inode here
+  ext2_free_inode(ip);
+
+  ext2_iops.iupdate(ip);
 }
 
 void
@@ -1454,6 +1706,12 @@ got_it:
 void
 ext2_ilock(struct inode *ip)
 {
+  struct buf *bp;
+  struct ext2_inode *raw_inode;
+  struct ext2_inode_info *ei;
+
+  ei = ip->i_private;
+
   if(ip == 0 || ip->ref < 1)
     panic("ilock");
 
@@ -1463,7 +1721,27 @@ ext2_ilock(struct inode *ip)
   ip->flags |= I_BUSY;
   release(&icache.lock);
 
-  // TODO Here
+  if (!(ip->flags & I_VALID)) {
+    raw_inode = ext2_get_inode(&sb[ip->dev], ip->inum, &bp);
+    // Translate the inode type to xv6 type
+    if (S_ISDIR(raw_inode->i_mode)) {
+      ip->type = T_DIR;
+    } else if (S_ISREG(raw_inode->i_mode)) {
+      ip->type = T_FILE;
+    } else if (S_ISCHR(raw_inode->i_mode) || S_ISBLK(raw_inode->i_mode)) {
+      ip->type = T_DEV;
+    } else {
+      panic("ext2: invalid file mode");
+    }
+    ip->nlink = raw_inode->i_links_count;
+    ip->size = raw_inode->i_size;
+    memmove(&ei->i_ei, raw_inode, sizeof(ei->i_ei));
+
+    ext2_ops.brelse(bp);
+    ip->flags |= I_VALID;
+    if (ip->type == 0)
+      panic("ext2 ilock: no type");
+  }
 }
 
 int
