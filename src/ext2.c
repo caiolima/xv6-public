@@ -602,7 +602,7 @@ ext2_free_blocks(struct inode * inode, unsigned long block,
   unsigned long i;
   unsigned long overflow;
   struct superblock * superb = &sb[inode->dev];
-  struct ext2_sb_info * sbi = EXT2_SB(sb);
+  struct ext2_sb_info * sbi = EXT2_SB(&sb[inode->dev]);
   struct ext2_group_desc * desc;
   struct ext2_superblock * es = sbi->s_es;
   unsigned freed = 0, group_freed;
@@ -632,7 +632,7 @@ do_more:
   if (!bitmap_bh)
     goto error_return;
 
-  desc = ext2_get_group_desc (superb, block_group, &bh2);
+  desc = ext2_get_group_desc(superb, block_group, &bh2);
   if (!desc)
     goto error_return;
 
@@ -835,7 +835,7 @@ ext2_itrunc(struct inode *ip)
   long iblock;
   unsigned blocksize;
   blocksize = sb[ip->dev].blocksize;
-  iblock = (blocksize-1) >> EXT2_BLOCK_SIZE_BITS(&sb[ip->dev]);
+  iblock = (blocksize - 1) >> EXT2_BLOCK_SIZE_BITS(&sb[ip->dev]);
   n = ext2_block_to_path(ip, iblock, offsets, 0);
 
   struct ext2_inode_info *ei = ip->i_private;
