@@ -150,5 +150,57 @@ __ilog2_u32(uint32 n)
   return fls(n) - 1;
 }
 
+static inline int
+test_bit(long nr, volatile const unsigned long *addr)
+{
+  int oldbit;
+
+  asm volatile("bt %2,%1\n\t"
+    "sbb %0,%0"
+    : "=r" (oldbit)
+    : "m" (*(unsigned long *)addr), "Ir" (nr));
+
+  return oldbit;
+}
+
+#define __GEN_RMWcc(fullop, var, cc, ...)                         \
+do {                                                              \
+  char c;                                                         \
+  asm volatile (fullop "; set" cc " %1"                           \
+                  : "+m" (var), "=qm" (c)                         \
+                  : __VA_ARGS__ : "memory");                      \
+  return c != 0;                                                  \
+} while (0)
+
+#define GEN_BINARY_RMWcc(op, var, vcon, val, arg0, cc)            \
+  __GEN_RMWcc(op " %2, " arg0, var, cc, vcon (val))
+
+/**
+ * test_and_set_bit - Set a bit and return its old value
+ * @nr: Bit to set
+ * @addr: Address to count from
+ *
+ * This operation is atomic and cannot be reordered.
+ * It also implies a memory barrier.
+ */
+static inline int test_and_set_bit(long nr, volatile unsigned long *addr)
+{
+  GEN_BINARY_RMWcc("lock; bts", *addr, "Ir", nr, "%0", "c");
+}
+
+/**
+ * test_and_clear_bit - Clear a bit and return its old value
+ * @nr: Bit to clear
+ * @addr: Address to count from
+ *
+ * This operation is atomic and cannot be reordered.
+ * It also implies a memory barrier.
+ */
+static inline int test_and_clear_bit(long nr, volatile unsigned long *addr)
+{
+  GEN_BINARY_RMWcc("lock; btr", *addr, "Ir", nr, "%0", "c");
+}
+
+
 #endif /* XV6_TYPES_H_ */
 

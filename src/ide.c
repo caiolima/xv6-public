@@ -141,8 +141,8 @@ idestart(struct buf *b)
 {
   if(b == 0)
     panic("idestart");
-  if(b->blockno >= FSSIZE)
-    panic("incorrect blockno");
+  /* if(b->blockno >= FSSIZE) */
+  /*   panic("incorrect blockno"); */
 
   // Verify if the device is from Primary or Secodary BUS
   int baseport;

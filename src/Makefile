@@ -5,6 +5,7 @@ OBJS = \
 	exec.o\
 	ext2.o\
 	file.o\
+	find_bits.o\
 	ide.o\
 	ioapic.o\
 	kalloc.o\
@@ -36,7 +37,7 @@ OBJS = \
 # TOOLPREFIX = i386-jos-elf
 
 # Using native tools (e.g., on X86 Linux)
-#TOOLPREFIX = 
+#TOOLPREFIX =
 
 # Try to infer the correct TOOLPREFIX if not set
 ifndef TOOLPREFIX
@@ -169,6 +170,7 @@ UPROGS=\
 	_kill\
 	_ln\
 	_ls\
+	_ls_ext2\
 	_mkdir\
 	_rm\
 	_sh\
@@ -246,7 +248,7 @@ qemu-nox-gdb: fs.img xv6.img .gdbinit
 
 EXTRA=\
 	mkfs.c ulib.c user.h cat.c echo.c forktest.c grep.c kill.c\
-	ln.c ls.c mkdir.c rm.c mount.c stressfs.c usertests.c wc.c zombie.c\
+	ln.c ls.c ls_ext2.c mkdir.c rm.c mount.c stressfs.c usertests.c wc.c zombie.c\
 	printf.c umalloc.c\
 	README dot-bochsrc *.pl toc.* runoff runoff1 runoff.list\
 	.gdbinit.tmpl gdbutil\
