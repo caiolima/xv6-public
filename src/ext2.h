@@ -20,6 +20,35 @@ typedef unsigned long ext2_fsblk_t;
 
 #define EXT2_MAX_BGC 40
 
+#define EXT2_NAME_LEN 255
+
+/**
+ * EXT2_DIR_PAD defines the directory entries boundaries
+ *
+ * NOTE: It must be a multiple of 4
+ */
+#define EXT2_DIR_PAD                    4
+#define EXT2_DIR_ROUND                  (EXT2_DIR_PAD - 1)
+#define EXT2_DIR_REC_LEN(name_len)      (((name_len) + 8 + EXT2_DIR_ROUND) & \
+                                         ~EXT2_DIR_ROUND)
+#define EXT2_MAX_REC_LEN                ((1<<16)-1)
+
+/**
+ * Ext2 directory file types.  Only the low 3 bits are used.  The
+ * other bits are reserved for now.
+ */
+enum {
+  EXT2_FT_UNKNOWN  = 0,
+  EXT2_FT_REG_FILE = 1,
+  EXT2_FT_DIR      = 2,
+  EXT2_FT_CHRDEV   = 3,
+  EXT2_FT_BLKDEV   = 4,
+  EXT2_FT_FIFO     = 5,
+  EXT2_FT_SOCK     = 6,
+  EXT2_FT_SYMLINK  = 7,
+  EXT2_FT_MAX
+};
+
 /*
  * second extended-fs super-block data in memory
  */
@@ -215,6 +244,31 @@ struct ext2_inode_info {
 #define EXT2_ROOT_INO  2  /* Root inode */
 
 /*
+ * Structure of a directory entry
+ */
+
+struct ext2_dir_entry {
+  uint32 inode;       /* Inode number */
+  uint16 rec_len;     /* Directory entry length */
+  uint16 name_len;    /* Name length */
+  char   name[];      /* File name, up to EXT2_NAME_LEN */
+};
+
+/*
+ * The new version of the directory entry.  Since EXT2 structures are
+ * stored in intel byte order, and the name_len field could never be
+ * bigger than 255 chars, it's safe to reclaim the extra byte for the
+ * file_type field.
+ */
+struct ext2_dir_entry_2 {
+  uint32 inode;      /* Inode number */
+  uint16 rec_len;    /* Directory entry length */
+  uint8  name_len;   /* Name length */
+  uint8  file_type;
+  char   name[];     /* File name, up to EXT2_NAME_LEN */
+};
+
+/*
  * Structure of a blocks group descriptor
  */
 struct ext2_group_desc
@@ -308,9 +362,49 @@ void           ext2_iunlock(struct inode* ip);
 void           ext2_stati(struct inode *ip, struct stat *st);
 int            ext2_readi(struct inode *ip, char *dst, uint off, uint n);
 int            ext2_writei(struct inode *ip, char *src, uint off, uint n);
-int            ext2_dirlink(struct inode *dp, char *name, uint inum);
+int            ext2_dirlink(struct inode *dp, char *name, uint inum, uint type);
 int            ext2_unlink(struct inode *dp, uint off);
 int            ext2_isdirempty(struct inode *dp);
+
+#define EXT2_S_IFREG 0x8000
+#define EXT2_S_IFDIR 0x4000
+
+// Stat operations
+
+#define S_IFMT  00170000
+#define S_IFSOCK 0140000
+#define S_IFLNK  0120000
+#define S_IFREG  0100000
+#define S_IFBLK  0060000
+#define S_IFDIR  0040000
+#define S_IFCHR  0020000
+#define S_IFIFO  0010000
+#define S_ISUID  0004000
+#define S_ISGID  0002000
+#define S_ISVTX  0001000
+
+#define S_ISLNK(m)     (((m) & S_IFMT) == S_IFLNK)
+#define S_ISREG(m)     (((m) & S_IFMT) == S_IFREG)
+#define S_ISDIR(m)     (((m) & S_IFMT) == S_IFDIR)
+#define S_ISCHR(m)     (((m) & S_IFMT) == S_IFCHR)
+#define S_ISBLK(m)     (((m) & S_IFMT) == S_IFBLK)
+#define S_ISFIFO(m)    (((m) & S_IFMT) == S_IFIFO)
+#define S_ISSOCK(m)    (((m) & S_IFMT) == S_IFSOCK)
+
+#define S_IR  WXU 00700
+#define S_IRUSR 00400
+#define S_IWUSR 00200
+#define S_IXUSR 00100
+
+#define S_IRWXG 00070
+#define S_IRGRP 00040
+#define S_IWGRP 00020
+#define S_IXGRP 00010
+
+#define S_IRWXO 00007
+#define S_IROTH 00004
+#define S_IWOTH 00002
+#define S_IXOTH 00001
 
 #endif /* XV6_EXT2_h */
 

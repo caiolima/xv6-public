@@ -144,6 +144,7 @@ char*           strncpy(char*, const char*, int);
 void            strconcat(char*, const char*, const char*);
 void            itoa(int, char*);
 int             strcmp(const char*, const char*);
+void *          memscan(void *addr, int c, int size);
 
 // syscall.c
 int             argint(int, int*);
