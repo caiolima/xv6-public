@@ -58,7 +58,7 @@ To configure an environment using vagrant, the first thing to do is
 download and install the Vagrant software. you can do this following
 isntructions from https://www.vagrantup.com/downloads.html. If you
 are not use to use vagrant, don't worry. Almost all configurations
-are already done on this Vagrantfile.
+are already done on this Vagrantfile (https://gist.github.com/caiolima/fdc6974c1fec0e57caac).
 The workflow using the Vagrant is simple: share the folder where the
 xv6 source code is beteween Vagrant machine and host OS. This way,
 you can decide your own development env (IDE, Editor, etc.) that you
