@@ -1,19 +1,24 @@
 xv6 is a re-implementation of Dennis Ritchie's and Ken Thompson's Unix
 Version 6 (v6).  xv6 loosely follows the structure and style of v6,
 but is implemented for a modern x86-based multiprocessor using ANSI C.
+This version is a fork from the original xv6 implementing the VFS (Virtual
+Filesystem) layer to enable more than one filesystem operate in the same
+time. A simple implementation of ext2 filesystem is also added.
 
 ACKNOWLEDGMENTS
 
 xv6 is inspired by John Lions's Commentary on UNIX 6th Edition (Peer
 to Peer Communications; ISBN: 1-57398-013-7; 1st edition (June 14,
 2000)). See also http://pdos.csail.mit.edu/6.828/2012/v6.html, which
-provides pointers to on-line resources for v6.
+provides pointers to on-line resources for v6. You can find documentation
+about the VFS implementantio on Documentation/ folder soonly.
 
 xv6 borrows code from the following sources:
     JOS (asm.h, elf.h, mmu.h, bootasm.S, ide.c, console.c, and others)
     Plan 9 (entryother.S, mp.h, mp.c, lapic.c)
     FreeBSD (ioapic.c)
     NetBSD (console.c)
+    GNU/Linux (ext2.h, ext2.c)
 
 The following people have made contributions:
     Russ Cox (context switching, locking)
@@ -21,6 +26,7 @@ The following people have made contributions:
     Xiao Yu (MP)
     Nickolai Zeldovich
     Austin Clements
+    Caio Lima (ide driver changes and VFS layer implementation)
 
 In addition, we are grateful for the bug reports and patches contributed by
 Silas Boyd-Wickizer, Peter Froehlich, Shivam Handa, Anders Kaseorg, Eddie
@@ -32,18 +38,117 @@ Copyright 2006-2014 Frans Kaashoek, Robert Morris, and Russ Cox.
 
 ERROR REPORTS
 
-If you spot errors or have suggestions for improvement, please send
-email to Frans Kaashoek and Robert Morris (kaashoek,rtm@csail.mit.edu). 
+If you spot errors or have suggestions for improvement of this fork version,
+send email to caiolima@dcc.ufba.br. If you found an error on the official
+xv6 code, follow the instruction on the official site (point to the site).
 
 BUILDING AND RUNNING XV6
 
-To build xv6 on an x86 ELF machine (like Linux or FreeBSD), run "make".
-On non-x86 or non-ELF machines (like OS X, even on x86), you will
-need to install a cross-compiler gcc suite capable of producing x86 ELF
-binaries.  See http://pdos.csail.mit.edu/6.828/2014/tools.html.
-Then run "make TOOLPREFIX=i386-jos-elf-".
+Tehre are 2 ways to build and run the xv6 OS. The first one is using a
+pre-configured vagrant machine and we recommend follow this way to avoid
+headaches. The second solution we recommend follow this documentation
+https://pdos.csail.mit.edu/6.828/2014/tools.html
 
-To run xv6, install the QEMU PC simulators.  To run in QEMU, run "make qemu".
+Required software:
+- Vagrant: https://www.vagrantup.com/downloads.html
+- git: https://git-scm.com/book/en/v2/Getting-Started-Installing-Git
+- QEMU (Run the xv6 OS on a virtual machine): https://en.wikibooks.org/wiki/QEMU/Installing_QEMU
 
-To create a typeset version of the code, run "make xv6.pdf".  This
-requires the "mpage" utility.  See http://www.mesa.nl/pub/mpage/.
+To configure an environment using vagrant, the first thing to do is
+download and install the Vagrant software. you can do this following
+isntructions from https://www.vagrantup.com/downloads.html. If you
+are not use to use vagrant, don't worry. Almost all configurations
+are already done on this Vagrantfile.
+The workflow using the Vagrant is simple: share the folder where the
+xv6 source code is beteween Vagrant machine and host OS. This way,
+you can decide your own development env (IDE, Editor, etc.) that you
+are accustomed.
+
+After install and configure the vagrant env, you need to download
+our xv6 code and place it on the shared folder between vagrant machine
+and your host OS. It is recommended clone the source code on the same
+folder where the Vagrantfile is placed. You can find this repository on
+https://github.com/caiolima/xv6-public or download the code using the
+following command:
+
+```git clone https://github.com/caiolima/xv6-public.git```
+
+Ps.: This clone can be done from the vagrant machine, because it already
+have git installed.
+
+After the clone command, your folder tree shall be like this one supposing
+that you placed the Vagrant file on ~/xv6-dev:
+
+```
+- Vagrantfile;
+- xv6-public;
+```
+
+Now, we are almost in the end of the build step. We need to run the commands:
+
+```
+cd ~/xv6-dev
+vagrant up
+vagrant ssh
+```
+
+Maybe the first time you run ```vagrant up``` you will need to wait for a while
+because the vagrant need to download the VM image. After the download, the load
+time will be faster.
+
+When you successfully ssh into the vagrant vm, run the following commands to
+build the xv6 OS:
+
+```
+cd /vagrant/xv6-public/src
+make
+```
+
+To create an valid ext2 filesystem, you need to run the following commands on
+/vagrant/xv6-public/src folder:
+
+```
+dd if=/dev/zero of=ext2.img bs=10M count=1
+sudo mkfs.ext2 -b 1024 -T "EXT2_TEST" ext2.img
+```
+
+To run and test the xv6, you need to open the terminal application of your host
+OS and run:
+
+```
+make qemu
+```
+
+The QEMU will start and boot the xv6. If you have already compiled the xv6 before
+you will notice that you have a program to mount a new filesystem from a new device
+to mount a new filesystem, you need to create an folder and run the mount command.
+To execute these steps, you need to type the commands on the xv6 terminal:
+
+```
+mkdir mnt
+mount /dev/hdc mnt ext2
+```
+
+The mount program requires 3 parameters: the block device that contais your
+FS (/dev/hdc), the folder where this device will be mounted on (mnt) and
+the type of the FS (ext2). If you try mount a filesystem that is not implemented
+on the xv6, this program will return an error.
+
+Now, you have an mounted on ext2 fs on mnt/ folder. You can run the commands over
+this folder, but the current ls program does not work with ext2 filesystems because
+they are hardcoded to the xv6 default FS (we call it s5).
+
+BUG REPORT AND PROBLEMS ON BUILD OR XV6 EXECUTATION
+
+If you have any problem trying to build and run the xv6, dont hesitate to send us
+an email. You can send email to ticaiolima@gmail.com.
+If you have found a BUG, fell free to create an issue on github repository.
+
+VFS DOCUMENTATION
+
+We are documenting the VFS implementation and when we finish it, we will post
+on the wiki page of this repository and on Documentation/ folder.
+We are working on the following documentations right now:
+- The VFS architecture and code comment;
+- An tutorial to add a new Filesystem on xv6 using our VFS implementation;
+
