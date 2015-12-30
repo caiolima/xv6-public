@@ -71,7 +71,9 @@ folder where the Vagrantfile is placed. You can find this repository on
 https://github.com/caiolima/xv6-public or download the code using the
 following command:
 
-```git clone https://github.com/caiolima/xv6-public.git```
+-------------------------------------------------------
+git clone https://github.com/caiolima/xv6-public.git
+-------------------------------------------------------
 
 Ps.: This clone can be done from the vagrant machine, because it already
 have git installed.
@@ -79,18 +81,18 @@ have git installed.
 After the clone command, your folder tree shall be like this one supposing
 that you placed the Vagrant file on ~/xv6-dev:
 
-```
+-------------------------------------------------------
 - Vagrantfile;
 - xv6-public;
-```
+-------------------------------------------------------
 
 Now, we are almost in the end of the build step. We need to run the commands:
 
-```
+-------------------------------------------------------
 cd ~/xv6-dev
 vagrant up
 vagrant ssh
-```
+-------------------------------------------------------
 
 Maybe the first time you run ```vagrant up``` you will need to wait for a while
 because the vagrant need to download the VM image. After the download, the load
@@ -99,35 +101,35 @@ time will be faster.
 When you successfully ssh into the vagrant vm, run the following commands to
 build the xv6 OS:
 
-```
+-------------------------------------------------------
 cd /vagrant/xv6-public/src
 make
-```
+-------------------------------------------------------
 
 To create an valid ext2 filesystem, you need to run the following commands on
 /vagrant/xv6-public/src folder:
 
-```
+-------------------------------------------------------
 dd if=/dev/zero of=ext2.img bs=10M count=1
 sudo mkfs.ext2 -b 1024 -T "EXT2_TEST" ext2.img
-```
+-------------------------------------------------------
 
 To run and test the xv6, you need to open the terminal application of your host
 OS and run:
 
-```
+-------------------------------------------------------
 make qemu
-```
+-------------------------------------------------------
 
 The QEMU will start and boot the xv6. If you have already compiled the xv6 before
 you will notice that you have a program to mount a new filesystem from a new device
 to mount a new filesystem, you need to create an folder and run the mount command.
 To execute these steps, you need to type the commands on the xv6 terminal:
 
-```
+-------------------------------------------------------
 mkdir mnt
 mount /dev/hdc mnt ext2
-```
+-------------------------------------------------------
 
 The mount program requires 3 parameters: the block device that contais your
 FS (/dev/hdc), the folder where this device will be mounted on (mnt) and
@@ -137,12 +139,6 @@ on the xv6, this program will return an error.
 Now, you have an mounted on ext2 fs on mnt/ folder. You can run the commands over
 this folder, but the current ls program does not work with ext2 filesystems because
 they are hardcoded to the xv6 default FS (we call it s5).
-
-BUG REPORT AND PROBLEMS ON BUILD OR XV6 EXECUTATION
-
-If you have any problem trying to build and run the xv6, dont hesitate to send us
-an email. You can send email to ticaiolima@gmail.com.
-If you have found a BUG, fell free to create an issue on github repository.
 
 VFS DOCUMENTATION
 
